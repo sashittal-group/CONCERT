@@ -65,7 +65,8 @@ def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
         for n in G.nodes():
             x = x_pos[n]
             y = G.nodes[n]["time"]
-            label = f"{n}"
+            typ = G.nodes[n]["type"]
+            label = f"{n}\n({typ})"
             ax.text(x + 0.12, y, label, fontsize=8, ha="center", va="bottom")
 
     # ---------

@@ -3,6 +3,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import json
 from networkx.readwrite import json_graph
+import numpy as np
 
 
 def simulate_constant_bd(lam, mu, time_length, seed=None):
@@ -84,6 +85,154 @@ def simulate_constant_bd(lam, mu, time_length, seed=None):
     return G, root
 
 
+def simulate_multitype_bd_with_diff(
+    lam,
+    mu,
+    Qs,
+    diff_T,
+    time_length,
+    root_type="A",
+    seed=None
+):
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    G = nx.DiGraph()
+    next_node = 0
+
+    root = next_node
+    next_node += 1
+    G.add_node(root, time=0.0, event="root", type=root_type)
+
+    child = next_node
+    next_node += 1
+    G.add_node(child, time=None, event=None, type=root_type)
+    G.add_edge(root, child, start_time=0.0, end_time=None, length=None)
+
+    alive = [(root, child, root_type)]
+
+    t = 0.0
+
+    while t < time_length and alive:
+
+        # ---- compute BD total rate ----
+        rates = []
+        total_rate = 0.0
+
+        for parent, tip, typ in alive:
+            r = lam[typ] + mu[typ]
+            rates.append(r)
+            total_rate += r
+
+        # BD event time
+        if total_rate > 0:
+            dt_bd = random.expovariate(total_rate)
+            t_bd = t + dt_bd
+        else:
+            t_bd = float("inf")
+
+        # ---- compute next differentiation time ----
+        t_diff = float("inf")
+        diff_index = None
+
+        for i, (parent, tip, typ) in enumerate(alive):
+            dt = diff_T.nodes[typ]["diff_time"]
+            if dt is not None and dt > t and dt < t_diff:
+                t_diff = dt
+
+        # ---- determine next event ----
+        if t_bd < t_diff and t_bd < time_length:
+            # ===== Birth or Death =====
+            t = t_bd
+
+            r = random.random() * total_rate
+            cumulative = 0
+            for i, rate in enumerate(rates):
+                cumulative += rate
+                if r <= cumulative:
+                    chosen_index = i
+                    break
+
+            parent, tip, typ = alive.pop(chosen_index)
+
+            G.nodes[tip]["time"] = t
+            G.edges[parent, tip]["end_time"] = t
+            G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
+
+            if random.random() < lam[typ] / (lam[typ] + mu[typ]):
+                # birth
+                G.nodes[tip]["event"] = "birth"
+
+                for _ in range(2):
+                    c = next_node
+                    next_node += 1
+                    G.add_node(c, time=None, event=None, type=typ)
+                    G.add_edge(tip, c, start_time=t, end_time=None, length=None)
+                    alive.append((tip, c, typ))
+            else:
+                # death
+                G.nodes[tip]["event"] = "death"
+
+        elif t_diff < time_length:
+            # ===== Differentiation =====
+            t = t_diff
+
+            new_alive = []
+
+            for parent, tip, typ in alive:
+                dt = diff_T.nodes[typ]["diff_time"]
+
+                if dt == t_diff:
+                    # close current edge
+                    G.nodes[tip]["time"] = t
+                    G.nodes[tip]["event"] = "diff"
+
+                    G.edges[parent, tip]["end_time"] = t
+                    G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
+
+                    children = list(diff_T.successors(typ))
+
+                    if children:
+                        # Extract probabilities for allowed children
+                        probs = Qs.loc[typ, children].values.astype(float)
+
+                        # Optional safety normalization (recommended)
+                        total = probs.sum()
+                        if total <= 0:
+                            raise ValueError(f"No positive transition probability from {typ}")
+                        probs = probs / total
+
+                        # Sample according to probability vector
+                        new_type = np.random.choice(children, p=probs)
+
+                        c = next_node
+                        next_node += 1
+                        G.add_node(c, time=None, event=None, type=new_type)
+                        G.add_edge(tip, c, start_time=t, end_time=None, length=None)
+
+                        new_alive.append((tip, c, new_type))
+                else:
+                    new_alive.append((parent, tip, typ))
+
+            alive = new_alive
+
+        else:
+            break
+
+    # ---- truncate survivors ----
+    for parent, tip, typ in alive:
+        G.nodes[tip]["time"] = time_length
+        G.nodes[tip]["event"] = "sample"
+        G.edges[parent, tip]["end_time"] = time_length
+        G.edges[parent, tip]["length"] = (
+            time_length - G.edges[parent, tip]["start_time"]
+        )
+
+    return G, root
+
+
+
 def filter_extant_lineages(G, root):
     """
     Prune tree bottom-up to keep only extant lineages.
@@ -108,7 +257,7 @@ def filter_extant_lineages(G, root):
             continue
 
         # ---------- rule 2 & 3: birth events ----------
-        if event == "birth":
+        if event == "birth" or event == "diff":
             children = list(H.successors(v))
 
             # no surviving children → delete birth
@@ -183,13 +332,100 @@ def load_tree(filename):
 if __name__ == "__main__":
     from src.plotters import plot_simulated_lineage_tree
 
-    save_dir = "data/simulation/test"
+    # save_dir = "data/simulation/test"
 
-    G, root = simulate_constant_bd(
-        lam=5.0,
-        mu=.5,
+    # G, root = simulate_constant_bd(
+    #     lam=5.0,
+    #     mu=.5,
+    #     time_length=1.0,
+    #     seed=5
+    # )
+
+    # for u, v, data in G.edges(data=True):
+    #     print((u, v), data)
+    
+    # save_tree(G, root, f"{save_dir}/T.json")
+    # plot_simulated_lineage_tree(G, root)
+
+    # plt.savefig(f"{save_dir}/T.png")
+    # plt.close()
+
+    # G_extant = filter_extant_lineages(G, root)
+
+    # save_tree(G_extant, root, f"{save_dir}/T_extant.json")
+
+    # plot_simulated_lineage_tree(G_extant, root)
+
+    # plt.savefig(f"{save_dir}/T_extant.png")
+    # plt.close()
+
+
+    save_dir = "data/simulation/test_diff"
+
+    import networkx as nx
+    import string
+
+    diff_map_edges = [
+        ("A", "B"),
+        ("A", "C"),
+        ("B", "D"),
+        ("C", "D"),
+        ("C", "E"),
+    ]
+
+    diff_times = [0.25, 0.5, 0.60, None, None]
+
+    diff_T = nx.DiGraph()
+
+    for i, t in enumerate(diff_times):
+        diff_T.add_node(string.ascii_uppercase[i], diff_time=t)
+
+    for s, e in diff_map_edges:
+        diff_T.add_edge(s, e)
+
+    lam = {
+        "A": 5.0,
+        "B": 2.0,
+        "C": 4.0,
+        "D": 1.0,
+        "E": 3.0,
+    }
+
+    mu = {
+        "A": 0.3,
+        "B": 0.2,
+        "C": 0.2,
+        "D": 0.1,
+        "E": 0.1,
+    }
+
+    import pandas as pd
+
+    types = list(diff_T.nodes)
+
+    Qs = pd.DataFrame(0.0, index=types, columns=types)
+
+    # A -> B, C
+    Qs.loc["A", "B"] = 0.6
+    Qs.loc["A", "C"] = 0.4
+
+    # B -> D
+    Qs.loc["B", "D"] = 1.0
+
+    # C -> D, E
+    Qs.loc["C", "D"] = 0.6
+    Qs.loc["C", "E"] = 0.4
+
+    # D and E are terminal (no outgoing transitions)
+
+    G, root = simulate_multitype_bd_with_diff(
+        lam=lam,
+        mu=mu,
+        diff_T=diff_T,
+        Qs=Qs,              # assuming your function includes Qs
         time_length=1.0,
-        seed=9
+        root_type="A",
+        seed=42
     )
 
     for u, v, data in G.edges(data=True):
