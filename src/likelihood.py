@@ -2,7 +2,129 @@ from math import exp
 import pandas as pd
 import networkx as nx
 
-def calculate_likelihood(
+
+def calculate_likelihood_of_tree(
+    birth_rates: dict,
+    death_rates: dict,
+    sampling_rate: float,
+    transition_probabilities: pd.DataFrame,
+    cell_lineage_T,
+    diff_T,
+    diff_T_root='A',
+):
+    
+    states = list(diff_T.nodes())
+    L = dict()
+    U = dict()
+
+    for state in states:
+        U[(state, 0)] = 1 - sampling_rate
+    
+    for diff_node in nx.dfs_postorder_nodes(diff_T):
+        diff_time = diff_T.nodes[diff_node]['diff_time']
+        if diff_time is None: diff_time = 0
+        else: diff_time = 1 - diff_time
+
+        if diff_time > 0:
+            U_t = 0
+            children = list(diff_T.successors(diff_node))
+            for child in children:
+                child_node = diff_T.nodes[child]
+                child_diff_time = child_node['diff_time']
+                if child_diff_time is None: child_diff_time = 0
+                else: child_diff_time = 1 - child_diff_time
+
+                U_child = U[(child, child_diff_time)]
+
+                C = (U_child - 1) / (U_child - (death_rates[child] / birth_rates[child]))
+                
+                U_child_s = 1 - (birth_rates[child] - death_rates[child]) / \
+                    (birth_rates[child] * (1 - (1 / C) * 
+                                           exp( -(birth_rates[child] - death_rates[child]) * (diff_time - child_diff_time) )))
+
+                U_t += U_child_s * transition_probabilities.loc[diff_node, child]
+            
+            U[(diff_node, diff_time)] = U_t
+
+    
+    def calculate_likelihood_along_edge(u, v, t, state):
+        key = (u, v, t, state)
+        if key in L:
+            return L[key]
+    
+        diff_time = diff_T.nodes[state]['diff_time']
+        if diff_time is None: diff_time = 0
+        else: diff_time = 1 - diff_time
+
+        v_node = cell_lineage_T.nodes[v]
+        v_t = v_node['T']
+        
+        if v_t < diff_time:  # Change of state within the edge
+            
+            U_t = U[(state, diff_time)]
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]))
+
+            flow = exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time)) * \
+                    ( (C - 1) / 
+                      (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
+            
+            p = 0
+            for child_state in diff_T.successors(state):
+                p += transition_probabilities.loc[state, child_state] * calculate_likelihood_along_edge(u, v, diff_time, child_state)
+
+            L[key] = flow * p
+
+        else: # Edge ends with boundary condition
+            
+            U_t = U[(state, diff_time)]
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]))
+            flow = exp( -(birth_rates[state] - death_rates[state]) * (t - v_t)) * \
+                    ( (C - exp( -(birth_rates[state] - death_rates[state]) * (v_t - diff_time))) / 
+                      (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
+
+            # print(u, v, '|', C, '|', t, v_t, '=>', flow)
+            
+            children = list(cell_lineage_T.successors(v))
+            
+            if len(children) == 0:  # Boundary condition: current time 
+                v_state = v_node['type']
+                if state == v_state: p = sampling_rate
+                else: p = 0
+            
+            elif len(children) == 2:  # Boundary condition: birth event
+                L1 = calculate_likelihood_along_edge(v, children[0], v_t, state)
+                L2 = calculate_likelihood_along_edge(v, children[1], v_t, state)
+                p = L1 * L2 * birth_rates[state]
+
+                # print(birth_rates[state])
+            
+            else:
+                raise Exception("#Children must be 0 or 2")
+            
+            L[key] = flow * p
+        
+        return L[key]
+
+
+    for parent in nx.dfs_postorder_nodes(cell_lineage_T):
+        node = cell_lineage_T.nodes[parent]
+        node_time = node['T']
+        node_state = node.get('type')
+        children = list(cell_lineage_T.successors(parent))
+        
+        for child in children:
+            if node_state is not None:
+                calculate_likelihood_along_edge(parent, child, node_time, node_state)
+            else:
+                for state in states:
+                    calculate_likelihood_along_edge(parent, child, node_time, state)
+    
+    root_node = 0
+    root_child = next(cell_lineage_T.successors(root_node))
+    return L[(0, root_child, 1.0, diff_T_root)]
+
+
+def calculate_likelihood_2(
     birth_rates: dict,
     death_rates: dict,
     transition_probabilities: pd.DataFrame,
@@ -17,6 +139,7 @@ def calculate_likelihood(
                       ]
 
     for node in internal_nodes:
+        # print(birth_rates[cell_lineage_T.nodes[node]['type']])
         prob *= birth_rates[cell_lineage_T.nodes[node]['type']]
     
     # edges
@@ -110,6 +233,8 @@ def calculate_likelihood(
 
         # print(start, end, type_end, p)
 
+        # print(u, v, '|', Cks[v_type], '|', start, end, '=>', p)
+
         prob *= p
     
         # transition probs
@@ -199,7 +324,7 @@ if __name__ == "__main__":
     types = ['A', 'B', 'C', 'D', 'E']
     transition_probabilities = pd.DataFrame(transition_prob, index=types, columns=types)
 
-    calculate_likelihood(
+    calculate_likelihood_of_tree(
         birth_rates={'A': 1.2, 'B': 1.0, 'C': 1.2, 'D': 0.9, 'E': 0.8,},
         death_rates={'A': 0.2, 'B': 0.1, 'C': 0.2, 'D': 0.3, 'E': 0.3,}, 
         transition_probabilities=transition_probabilities,
