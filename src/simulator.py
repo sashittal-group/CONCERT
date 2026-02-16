@@ -1,9 +1,14 @@
 import random
+import string
+import sys
 import networkx as nx
 import matplotlib.pyplot as plt
 import json
 from networkx.readwrite import json_graph
 import numpy as np
+import pandas as pd
+import argparse
+import os
 
 
 def simulate_constant_bd(lam, mu, time_length, seed=None):
@@ -332,116 +337,76 @@ def load_tree(filename):
 if __name__ == "__main__":
     from src.plotters import plot_simulated_lineage_tree
 
-    # save_dir = "data/simulation/test"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s', type=int, help='seed [0]', default = 0)
+    parser.add_argument('-o', type=str, help='output prefix', default='sample')
 
-    # G, root = simulate_constant_bd(
-    #     lam=5.0,
-    #     mu=.5,
-    #     time_length=1.0,
-    #     seed=5
-    # )
+    args = parser.parse_args(None if sys.argv[1:] else ['-h'])
 
-    # for u, v, data in G.edges(data=True):
-    #     print((u, v), data)
-    
-    # save_tree(G, root, f"{save_dir}/T.json")
-    # plot_simulated_lineage_tree(G, root)
-
-    # plt.savefig(f"{save_dir}/T.png")
-    # plt.close()
-
-    # G_extant = filter_extant_lineages(G, root)
-
-    # save_tree(G_extant, root, f"{save_dir}/T_extant.json")
-
-    # plot_simulated_lineage_tree(G_extant, root)
-
-    # plt.savefig(f"{save_dir}/T_extant.png")
-    # plt.close()
-
-
-    save_dir = "data/simulation/test_diff"
-
-    import networkx as nx
-    import string
+    save_dir = args.o
+    seed = args.s
 
     diff_map_edges = [
         ("A", "B"),
         ("A", "C"),
-        ("B", "D"),
-        ("C", "D"),
-        ("C", "E"),
     ]
 
-    diff_times = [0.25, 0.5, 0.60, None, None]
+    diff_times = [0.5, None, None]
 
     diff_T = nx.DiGraph()
 
     for i, t in enumerate(diff_times):
-        diff_T.add_node(string.ascii_uppercase[i], diff_time=t)
+        diff_T.add_node(string.ascii_uppercase[i], diff_time = t)
 
     for s, e in diff_map_edges:
         diff_T.add_edge(s, e)
 
     lam = {
         "A": 5.0,
-        "B": 2.0,
-        "C": 4.0,
-        "D": 1.0,
-        "E": 3.0,
+        "B": 3.0,
+        "C": 1.0,
     }
 
     mu = {
         "A": 0.3,
         "B": 0.2,
         "C": 0.2,
-        "D": 0.1,
-        "E": 0.1,
     }
-
-    import pandas as pd
 
     types = list(diff_T.nodes)
 
     Qs = pd.DataFrame(0.0, index=types, columns=types)
 
     # A -> B, C
-    Qs.loc["A", "B"] = 0.6
-    Qs.loc["A", "C"] = 0.4
-
-    # B -> D
-    Qs.loc["B", "D"] = 1.0
-
-    # C -> D, E
-    Qs.loc["C", "D"] = 0.6
-    Qs.loc["C", "E"] = 0.4
-
-    # D and E are terminal (no outgoing transitions)
+    Qs.loc["A", "B"] = 0.3
+    Qs.loc["A", "C"] = 0.7
 
     G, root = simulate_multitype_bd_with_diff(
         lam=lam,
         mu=mu,
         diff_T=diff_T,
-        Qs=Qs,              # assuming your function includes Qs
+        Qs=Qs,
         time_length=1.0,
         root_type="A",
-        seed=42
+        seed=seed
     )
 
-    for u, v, data in G.edges(data=True):
-        print((u, v), data)
-    
+    os.makedirs(save_dir, exist_ok=True)
+
+    print(G.nodes(data=True))
+   
     save_tree(G, root, f"{save_dir}/T.json")
-    plot_simulated_lineage_tree(G, root)
-
-    plt.savefig(f"{save_dir}/T.png")
-    plt.close()
-
     G_extant = filter_extant_lineages(G, root)
+    save_tree(G_extant, root, f"{save_dir}/T_reconstructed.json")
 
-    save_tree(G_extant, root, f"{save_dir}/T_extant.json")
 
-    plot_simulated_lineage_tree(G_extant, root)
+    try:
+        plot_simulated_lineage_tree(G, root)
+        plt.savefig(f"{save_dir}/T.png")
+        plt.close()
 
-    plt.savefig(f"{save_dir}/T_extant.png")
-    plt.close()
+        plot_simulated_lineage_tree(G_extant, root)
+        plt.savefig(f"{save_dir}/T_reconstructed.png")
+        plt.close()
+    except Exception as e:
+        print(f"Plotting failed: {e}")
