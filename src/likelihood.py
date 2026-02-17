@@ -311,6 +311,14 @@ def type_internal_nodes(cell_lineage_T, diff_T):
     return cell_lineage_T
 
 
+def add_node_times(cell_lineage_T, root=0):
+    distances = nx.single_source_dijkstra_path_length(cell_lineage_T, root, weight='weight')
+    for node, dist in distances.items():
+        cell_lineage_T.nodes[node]['T'] = 1 - dist
+    
+    return cell_lineage_T
+
+
 
 if __name__ == "__main__":
         
