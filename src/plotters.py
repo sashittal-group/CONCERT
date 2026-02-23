@@ -2,6 +2,20 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 
+color_map = {
+    "NMPs": "orange",
+    "NeuralTube": "skyblue",
+    "Somite": "green",
+    "Endoderm": "yellow",
+    "Endothelial": "blue",
+    "PGCLC": "purple",
+    "MP": "pink",
+    "NMSTD": "cyan",
+    "NMSD": "gold",
+    "NMS": "brown",
+    "NS": "lightcoral",
+}
+
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
     """
     Plot an edge-based birth–death tree.
@@ -102,7 +116,7 @@ def plot_differentiation_tree(diff_T, show_labels=True):
         pos,
         with_labels=False,
         node_size=900,
-        node_color="lightblue",
+        node_color=[color_map.get(n, "lightgray") for n in diff_T.nodes()],
         arrows=True
     )
 
@@ -114,7 +128,7 @@ def plot_differentiation_tree(diff_T, show_labels=True):
     )
 
 
-def draw_ultrametric_tree(T, root, diff_T=None, draw_birth_event_lines=False):
+def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False):
     
     # Heights from root
     height = {}
@@ -161,24 +175,33 @@ def draw_ultrametric_tree(T, root, diff_T=None, draw_birth_event_lines=False):
         for c in children:
             ax.plot([x[c], x[c]], [y[u], y[c]], color="black")
 
-            # edge weight label (midpoint of vertical segment)
-            w = T[u][c]["weight"]
-            y_mid = (y[u] + y[c]) / 2
-            ax.text(
-                x[c] + 0.05,
-                y_mid,
-                f"{w:.2f}",
-                va="center",
-                fontsize=8,
-            )
+            if add_labels:
+                # edge weight label (midpoint of vertical segment)
+                w = T[u][c]["weight"]
+                y_mid = (y[u] + y[c]) / 2
+                ax.text(
+                    x[c] + 0.05,
+                    y_mid,
+                    f"{w:.2f}",
+                    va="center",
+                    fontsize=8,
+                )
 
     # Draw nodes
     for n in T.nodes:
-        ax.scatter(x[n], y[n], color="black", zorder=3)
-        node_str = str(n)
+        state = None
         if "type" in T.nodes[n]:
-            node_str += "\n(" + (T.nodes[n]["type"]) + ")"
-        ax.text(x[n] - 0.07, y[n] + 0.02, node_str, ha="center", fontsize=9)
+            state = T.nodes[n]["type"]
+        if "state" in T.nodes[n]:
+            state = T.nodes[n]["state"]
+        
+        color = color_map.get(state, "black")
+        ax.scatter(x[n], y[n], color=color, zorder=3, s=5)
+        node_str = str(n)
+        if add_labels:
+            if state is not None:
+                node_str += "\n(" + state + ")"
+            ax.text(x[n] - 0.07, y[n] + 0.02, node_str, ha="center", fontsize=9)
 
     if diff_T is not None:
         for n in diff_T.nodes:

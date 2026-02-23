@@ -249,7 +249,7 @@ def calculate_likelihood_2(
 
 
 
-def type_internal_nodes(cell_lineage_T, diff_T):
+def assign_states_to_internal_nodes(cell_lineage_T, diff_T):
 
     lineage_nodes = list(cell_lineage_T.nodes(data=True))
     diff_nodes = list(diff_T.nodes(data=True))
@@ -270,7 +270,6 @@ def type_internal_nodes(cell_lineage_T, diff_T):
         key=lambda x: x[1].get('T', x[1].get('diff_time_rev'))
     )
 
-
     transform_map = {}
 
     for node in combined_sorted:
@@ -278,24 +277,24 @@ def type_internal_nodes(cell_lineage_T, diff_T):
 
         if 'T' in node_data:
 
-            if 'type' in node_data:
-                continue
+            if 'type' in node_data: continue
+            if 'state' in node_data: continue
 
             children = list(cell_lineage_T.successors(node_id))
 
-            children_types = [cell_lineage_T.nodes[ch]['type'] 
+            children_types = [cell_lineage_T.nodes[ch]['state'] 
                             for ch in children 
-                            if 'type' in cell_lineage_T.nodes[ch]]
+                            if 'state' in cell_lineage_T.nodes[ch]]
             
             children_types = [transform_map.get(t, t) for t in children_types]
 
             unique_types = list(set(children_types))
 
             if len(unique_types) > 1:
-                raise ValueError(f"Children have > 1 types {unique_types}")
+                # raise ValueError(f"Children have > 1 types {unique_types}")
+                print(f"Children have > 1 types {unique_types}")
             
-            cell_lineage_T.nodes[node_id]["type"] = unique_types[0]
-
+            cell_lineage_T.nodes[node_id]["state"] = unique_types[0]
 
         elif 'diff_time_rev' in node_data:
 
