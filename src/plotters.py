@@ -114,7 +114,7 @@ def plot_differentiation_tree(diff_T, show_labels=True):
     )
 
 
-def draw_ultrametric_tree(T, root, diff_T=None):
+def draw_ultrametric_tree(T, root, diff_T=None, draw_birth_event_lines=False):
     
     # Heights from root
     height = {}
@@ -195,6 +195,24 @@ def draw_ultrametric_tree(T, root, diff_T=None):
                     label,
                     fontsize=9
                 )
+    
+    if draw_birth_event_lines:
+        # ---- Horizontal lines at birth events (internal nodes) ----
+        birth_nodes = [n for n in T.nodes if T.out_degree(n) > 1]
+
+        x_min = min(x.values())
+        x_max = max(x.values())
+
+        for n in birth_nodes:
+            ax.hlines(
+                y[n],
+                xmin=x_min - 0.5,
+                xmax=x_max + 0.5,
+                colors="red",
+                linestyles="dashed",
+                alpha=0.6,
+                linewidth=1.2
+            )
 
     # ax.set_ylim(-1.0, 0.0)
 
