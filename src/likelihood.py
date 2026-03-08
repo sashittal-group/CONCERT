@@ -10,7 +10,6 @@ def calculate_likelihood_of_tree(
     transition_probabilities: pd.DataFrame,
     cell_lineage_T,
     diff_T,
-    diff_T_root='A',
 ):
     
     states = list(diff_T.nodes())
@@ -45,21 +44,29 @@ def calculate_likelihood_of_tree(
                 U_t += U_child_s * transition_probabilities.loc[diff_node, child]
             
             U[(diff_node, diff_time)] = U_t
-
     
+    def condition(u, v):
+        # return (u == 4613182704 and v == 4613182864) or \
+        #         (u == 4613182864 and v == 4613183024) or \
+        #         (u == 4613182864 and v == 4613184464) or \
+        #         (u == 4613183024 and v == 4613184304)
+        # return (u == 4613183024 and v == 4613184304)
+        return (u == 4613183024 and v == 4613183184)
+
+
     def calculate_likelihood_along_edge(u, v, t, state):
         key = (u, v, t, state)
         if key in L:
             return L[key]
     
-        diff_time = diff_T.nodes[state]['diff_time']
+        diff_time = diff_T.nodes.get(state, {}).get('diff_time')
         if diff_time is None: diff_time = 0
         else: diff_time = 1 - diff_time
 
         v_node = cell_lineage_T.nodes[v]
         v_t = v_node['T']
         
-        if v_t < diff_time:  # Change of state within the edge
+        if v_t < diff_time < t:  # Change of state within the edge
             
             U_t = U[(state, diff_time)]
             C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]))
@@ -85,21 +92,34 @@ def calculate_likelihood_of_tree(
             # print(u, v, '|', C, '|', t, v_t, '=>', flow)
             
             children = list(cell_lineage_T.successors(v))
+
+            # if condition(u, v):
+            #     print(len(children), children)
             
             if len(children) == 0:  # Boundary condition: current time 
-                v_state = v_node['type']
-                if state == v_state: p = sampling_rate
+                v_state = v_node['state']
+                if state == v_state or v_state == "?": p = sampling_rate
                 else: p = 0
+
+                # if condition(u, v):
+                #     print(v_state)   
             
             elif len(children) == 2:  # Boundary condition: birth event
                 L1 = calculate_likelihood_along_edge(v, children[0], v_t, state)
                 L2 = calculate_likelihood_along_edge(v, children[1], v_t, state)
                 p = L1 * L2 * birth_rates[state]
 
+                # if condition(u, v):
+                #     print(L1, L2)
+
                 # print(birth_rates[state])
             
             else:
                 raise Exception("#Children must be 0 or 2")
+
+            # if condition(u, v):
+            #     print(p, flow, '|', u, v, t, v_t,  state, diff_time)
+            #     print('='*30)
             
             L[key] = flow * p
         
@@ -109,19 +129,20 @@ def calculate_likelihood_of_tree(
     for parent in nx.dfs_postorder_nodes(cell_lineage_T):
         node = cell_lineage_T.nodes[parent]
         node_time = node['T']
-        node_state = node.get('type')
+        node_state = node.get('state')
         children = list(cell_lineage_T.successors(parent))
         
         for child in children:
-            if node_state is not None:
+            if node_state is not None and node_state != "?":
                 calculate_likelihood_along_edge(parent, child, node_time, node_state)
             else:
                 for state in states:
                     calculate_likelihood_along_edge(parent, child, node_time, state)
     
-    root_node = 0
+    root_node = cell_lineage_T.graph['root']
     root_child = next(cell_lineage_T.successors(root_node))
-    return L[(0, root_child, 1.0, diff_T_root)]
+    diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
+    return L[(root_node, root_child, 1.0, diff_T_root)], L, U
 
 
 def calculate_likelihood_2(
@@ -139,8 +160,8 @@ def calculate_likelihood_2(
                       ]
 
     for node in internal_nodes:
-        # print(birth_rates[cell_lineage_T.nodes[node]['type']])
-        prob *= birth_rates[cell_lineage_T.nodes[node]['type']]
+        # print(birth_rates[cell_lineage_T.nodes[node]['state']])
+        prob *= birth_rates[cell_lineage_T.nodes[node]['state']]
     
     # edges
     # calculate end Es:
@@ -249,9 +270,10 @@ def calculate_likelihood_2(
 
 
 
-def assign_states_to_internal_nodes(cell_lineage_T, diff_T):
+def assign_states_to_internal_nodes(cell_lineage_T, diff_T, correct=False):
 
     lineage_nodes = list(cell_lineage_T.nodes(data=True))
+    lineage_nodes.reverse()
     diff_nodes = list(diff_T.nodes(data=True))
     for d in diff_nodes:
         if d[1]['diff_time'] is not None:
@@ -260,11 +282,12 @@ def assign_states_to_internal_nodes(cell_lineage_T, diff_T):
             d[1]['diff_time_rev'] = None
 
     combined_list = lineage_nodes + diff_nodes
-
+        
     combined_list = [
         (n, d) for n, d in combined_list 
         if d.get('T') is not None or d.get('diff_time_rev') is not None
     ]
+
     combined_sorted = sorted(
         combined_list,
         key=lambda x: x[1].get('T', x[1].get('diff_time_rev'))
@@ -277,24 +300,41 @@ def assign_states_to_internal_nodes(cell_lineage_T, diff_T):
 
         if 'T' in node_data:
 
-            if 'type' in node_data: continue
-            if 'state' in node_data: continue
-
             children = list(cell_lineage_T.successors(node_id))
 
             children_types = [cell_lineage_T.nodes[ch]['state'] 
                             for ch in children 
                             if 'state' in cell_lineage_T.nodes[ch]]
-            
+            if node_id == 34:
+                for c in children:
+                    print(c, cell_lineage_T.nodes[c])
+                print(children, children_types)
+
             children_types = [transform_map.get(t, t) for t in children_types]
 
+            if node_id == 34:
+                print(children, children_types)
+            
+            if 'state' in node_data: continue
+
             unique_types = list(set(children_types))
+            if "?" in unique_types:
+                unique_types.remove("?")
 
             if len(unique_types) > 1:
-                # raise ValueError(f"Children have > 1 types {unique_types}")
-                print(f"Children have > 1 types {unique_types}")
-            
-            cell_lineage_T.nodes[node_id]["state"] = unique_types[0]
+                
+                if correct:
+                    print(f"Children have > 1 types {unique_types} at {node_data['T']}")
+                    cell_lineage_T.nodes[node_id]['state'] = "?"
+                    descendants = nx.descendants(cell_lineage_T, node_id)
+                    for d in descendants:
+                        print(f"Setting state for descendant {d} at {cell_lineage_T.nodes[d]['T']} to ?")
+                        cell_lineage_T.nodes[d]['state'] = "?"
+                else:
+                    raise ValueError(f"Children have > 1 types {unique_types}")
+
+            else:
+                cell_lineage_T.nodes[node_id]["state"] = unique_types[0]
 
         elif 'diff_time_rev' in node_data:
 

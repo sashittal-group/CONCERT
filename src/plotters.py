@@ -14,6 +14,7 @@ color_map = {
     "NMSD": "gold",
     "NMS": "brown",
     "NS": "lightcoral",
+    "?": "red",
 }
 
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
@@ -105,7 +106,9 @@ def plot_differentiation_tree(diff_T, show_labels=True):
     pos = nx.nx_agraph.graphviz_layout(diff_T, prog="dot")
 
     node_labels = {
-        n: f"{n}\nt={diff_T.nodes[n]['diff_time']}"
+        n: f"{n}\n$\\tau$={diff_T.nodes[n]['diff_time']:.2f}"
+        if diff_T.nodes[n].get("diff_time") is not None
+        else f"{n}"
         for n in diff_T.nodes
     }
 
@@ -128,7 +131,7 @@ def plot_differentiation_tree(diff_T, show_labels=True):
     )
 
 
-def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False):
+def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None):
     
     # Heights from root
     height = {}
@@ -173,7 +176,10 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
 
         # vertical branches + weights
         for c in children:
-            ax.plot([x[c], x[c]], [y[u], y[c]], color="black")
+            color = "black"
+            if red_edges and (u, c) in red_edges:
+                color = "red"
+            ax.plot([x[c], x[c]], [y[u], y[c]], color=color)
 
             if add_labels:
                 # edge weight label (midpoint of vertical segment)
