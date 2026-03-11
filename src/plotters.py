@@ -98,37 +98,80 @@ def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
     return ax
 
 
-def plot_differentiation_tree(diff_T, show_labels=True):
+def plot_differentiation_tree(
+    diff_T,
+    birth_rates=None,
+    death_rates=None,
+    transition_probabilities=None,
+    show_labels=True,
+    figsize=(6, 5),
+):
     """
-    Plot differentiation tree.
-    Nodes are cell types, edges are differentiation paths.
+    Plot differentiation tree with optional birth/death rates and transition probabilities.
+    
+    Nodes: cell types (showing τ, b, d)
+    Edges: differentiation paths (showing transition probabilities)
     """
+    plt.figure(figsize=figsize)
     pos = nx.nx_agraph.graphviz_layout(diff_T, prog="dot")
 
-    node_labels = {
-        n: f"{n}\n$\\tau$={diff_T.nodes[n]['diff_time']:.2f}"
-        if diff_T.nodes[n].get("diff_time") is not None
-        else f"{n}"
-        for n in diff_T.nodes
-    }
+    # Node labels
+    node_labels = {}
+    for n in diff_T.nodes:
+        label = f"{n}"
+        if diff_T.nodes[n].get("diff_time") is not None:
+            label += f"\nτ={diff_T.nodes[n]['diff_time']:.2f}"
+        if birth_rates is not None:
+            label += f"\n$\\mu_b$={birth_rates.get(n, 0):.2f}"
+        if death_rates is not None:
+            label += f"\n$\\mu_d$={death_rates.get(n, 0):.2f}"
+        node_labels[n] = label
 
-    plt.figure(figsize=(5, 4))
+    # Edge labels (transition probabilities)
+    edge_labels = {}
+    if transition_probabilities is not None:
+        for u, v in diff_T.edges:
+            prob = transition_probabilities.loc[u, v] if (
+                u in transition_probabilities.index and v in transition_probabilities.columns
+            ) else 0.0
+            edge_labels[(u, v)] = f"{prob:.3f}"
 
+    # Node colors
+    node_colors = [color_map.get(n, "lightblue") if color_map else "lightblue" for n in diff_T.nodes()]
+
+    # Draw tree
     nx.draw(
         diff_T,
         pos,
         with_labels=False,
         node_size=900,
-        node_color=[color_map.get(n, "lightgray") for n in diff_T.nodes()],
+        node_color=node_colors,
         arrows=True
     )
 
-    # Node labels (ID + time)
-    nx.draw_networkx_labels(
-        diff_T,
-        pos,
-        labels=node_labels
-    )
+    # Draw node labels (smaller font)
+    if show_labels:
+        nx.draw_networkx_labels(
+            diff_T,
+            pos,
+            labels=node_labels,
+            font_size=8,       # smaller font
+            font_color="black"
+        )
+
+        # Draw edge labels (red, smaller)
+        if transition_probabilities is not None:
+            nx.draw_networkx_edge_labels(
+                diff_T,
+                pos,
+                edge_labels=edge_labels,
+                font_size=7,
+                font_color="red"
+            )
+
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
 
 
 def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None):

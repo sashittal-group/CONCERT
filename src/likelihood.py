@@ -1,6 +1,8 @@
 from math import exp
 import pandas as pd
+import numpy as np
 import networkx as nx
+from scipy.special import logsumexp
 
 
 def calculate_likelihood_of_tree(
@@ -45,15 +47,7 @@ def calculate_likelihood_of_tree(
             
             U[(diff_node, diff_time)] = U_t
     
-    def condition(u, v):
-        # return (u == 4613182704 and v == 4613182864) or \
-        #         (u == 4613182864 and v == 4613183024) or \
-        #         (u == 4613182864 and v == 4613184464) or \
-        #         (u == 4613183024 and v == 4613184304)
-        # return (u == 4613183024 and v == 4613184304)
-        return (u == 4613183024 and v == 4613183184)
-
-
+    
     def calculate_likelihood_along_edge(u, v, t, state):
         key = (u, v, t, state)
         if key in L:
@@ -92,34 +86,19 @@ def calculate_likelihood_of_tree(
             # print(u, v, '|', C, '|', t, v_t, '=>', flow)
             
             children = list(cell_lineage_T.successors(v))
-
-            # if condition(u, v):
-            #     print(len(children), children)
             
             if len(children) == 0:  # Boundary condition: current time 
                 v_state = v_node['state']
                 if state == v_state or v_state == "?": p = sampling_rate
                 else: p = 0
-
-                # if condition(u, v):
-                #     print(v_state)   
             
             elif len(children) == 2:  # Boundary condition: birth event
                 L1 = calculate_likelihood_along_edge(v, children[0], v_t, state)
                 L2 = calculate_likelihood_along_edge(v, children[1], v_t, state)
                 p = L1 * L2 * birth_rates[state]
 
-                # if condition(u, v):
-                #     print(L1, L2)
-
-                # print(birth_rates[state])
-            
             else:
                 raise Exception("#Children must be 0 or 2")
-
-            # if condition(u, v):
-            #     print(p, flow, '|', u, v, t, v_t,  state, diff_time)
-            #     print('='*30)
             
             L[key] = flow * p
         
@@ -143,6 +122,215 @@ def calculate_likelihood_of_tree(
     root_child = next(cell_lineage_T.successors(root_node))
     diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
     return L[(root_node, root_child, 1.0, diff_T_root)], L, U
+
+
+def calculate_log_likelihood_of_tree(
+    birth_rates,
+    death_rates,
+    sampling_rate,
+    transition_probabilities,
+    cell_lineage_T,
+    diff_T,
+):
+
+    states = list(diff_T.nodes())
+
+    L = {}
+    logU = {}
+
+    log_sampling = np.log(sampling_rate)
+    log_one_minus_sampling = np.log(1 - sampling_rate)
+
+    # -----------------------------
+    # Initialize U
+    # -----------------------------
+    for state in states:
+        logU[(state, 0)] = log_one_minus_sampling
+
+    # -----------------------------
+    # Compute U values
+    # -----------------------------
+    for diff_node in nx.dfs_postorder_nodes(diff_T):
+
+        diff_time = diff_T.nodes[diff_node]['diff_time']
+        if diff_time is None:
+            diff_time = 0
+        else:
+            diff_time = 1 - diff_time
+
+        if diff_time > 0:
+
+            children = list(diff_T.successors(diff_node))
+            log_terms = []
+
+            for child in children:
+
+                child_node = diff_T.nodes[child]
+                child_diff_time = child_node['diff_time']
+
+                if child_diff_time is None:
+                    child_diff_time = 0
+                else:
+                    child_diff_time = 1 - child_diff_time
+
+                logU_child = logU[(child, child_diff_time)]
+                U_child = np.exp(logU_child)
+
+                b = birth_rates[child]
+                d = death_rates[child]
+
+                C = (U_child - 1) / (U_child - (d / b))
+
+                U_child_s = 1 - (b - d) / (
+                    b * (1 - (1 / C) *
+                         np.exp(-(b - d) * (diff_time - child_diff_time)))
+                )
+
+                log_term = np.log(U_child_s) + np.log(
+                    transition_probabilities.loc[diff_node, child]
+                )
+
+                log_terms.append(log_term)
+
+            logU[(diff_node, diff_time)] = logsumexp(log_terms)
+
+    # -------------------------------------------------
+    # Likelihood along edge
+    # -------------------------------------------------
+
+    def calculate_log_likelihood_along_edge(u, v, t, state):
+
+        key = (u, v, t, state)
+        if key in L:
+            return L[key]
+
+        diff_time = diff_T.nodes.get(state, {}).get('diff_time')
+
+        if diff_time is None:
+            diff_time = 0
+        else:
+            diff_time = 1 - diff_time
+
+        v_node = cell_lineage_T.nodes[v]
+        v_t = v_node['T']
+
+        b = birth_rates[state]
+        d = death_rates[state]
+
+        logU_t = logU[(state, diff_time)]
+        U_t = np.exp(logU_t)
+
+        C = (U_t - 1) / (U_t - (d / b))
+
+        # ---------------------------------
+        # Case 1: state change inside edge
+        # ---------------------------------
+        if v_t < diff_time < t:
+
+            flow = (
+                -(b - d) * (t - diff_time)
+                + 2 * (
+                    np.log(C - 1)
+                    - np.log(C - np.exp(-(b - d) * (t - diff_time)))
+                )
+            )
+
+            log_terms = []
+
+            for child_state in diff_T.successors(state):
+
+                log_transition = np.log(
+                    transition_probabilities.loc[state, child_state]
+                )
+
+                log_child = calculate_log_likelihood_along_edge(
+                    u, v, diff_time, child_state
+                )
+
+                log_terms.append(log_transition + log_child)
+
+            log_p = logsumexp(log_terms)
+
+            L[key] = flow + log_p
+
+        # ---------------------------------
+        # Case 2: boundary
+        # ---------------------------------
+        else:
+
+            flow = (
+                -(b - d) * (t - v_t)
+                + 2 * (
+                    np.log(C - np.exp(-(b - d) * (v_t - diff_time)))
+                    - np.log(C - np.exp(-(b - d) * (t - diff_time)))
+                )
+            )
+
+            children = list(cell_lineage_T.successors(v))
+
+            # leaf
+            if len(children) == 0:
+
+                v_state = v_node['state']
+
+                if state == v_state or v_state == "?":
+                    log_p = log_sampling
+                else:
+                    log_p = -np.inf
+
+            # birth event
+            elif len(children) == 2:
+
+                logL1 = calculate_log_likelihood_along_edge(
+                    v, children[0], v_t, state
+                )
+
+                logL2 = calculate_log_likelihood_along_edge(
+                    v, children[1], v_t, state
+                )
+
+                log_p = logL1 + logL2 + np.log(birth_rates[state])
+
+            else:
+                raise Exception("#Children must be 0 or 2")
+
+            L[key] = flow + log_p
+
+        return L[key]
+
+    # ---------------------------------
+    # Compute likelihoods
+    # ---------------------------------
+
+    for parent in nx.dfs_postorder_nodes(cell_lineage_T):
+
+        node = cell_lineage_T.nodes[parent]
+        node_time = node['T']
+        node_state = node.get('state')
+
+        children = list(cell_lineage_T.successors(parent))
+
+        for child in children:
+
+            if node_state is not None and node_state != "?":
+
+                calculate_log_likelihood_along_edge(
+                    parent, child, node_time, node_state
+                )
+
+            else:
+
+                for state in states:
+
+                    calculate_log_likelihood_along_edge(
+                        parent, child, node_time, state
+                    )
+
+    root_node = cell_lineage_T.graph['root']
+    root_child = next(cell_lineage_T.successors(root_node))
+    diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
+
+    return L[(root_node, root_child, 1.0, diff_T_root)], L, logU
 
 
 def calculate_likelihood_2(
