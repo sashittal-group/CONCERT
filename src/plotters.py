@@ -15,6 +15,39 @@ color_map = {
     "NMS": "brown",
     "NS": "lightcoral",
     "?": "red",
+    # positive integers 0–15
+    "0": "#f7fbff",
+    "1": "#deebf7",
+    "2": "#c6dbef",
+    "3": "#9ecae1",
+    "4": "#6baed6",
+    "5": "#4292c6",
+    "6": "#2171b5",
+    "7": "#08519c",
+    "8": "#08306b",
+    "9": "#a1d99b",
+    "10": "#74c476",
+    "11": "#41ab5d",
+    "12": "#238b45",
+    "13": "#006d2c",
+    "14": "#00441b",
+    "15": "purple",  # existing
+    # negative integers -1 to -15
+    "-1": "#fee5d9",
+    "-2": "#fcbba1",
+    "-3": "#fc9272",
+    "-4": "#fb6a4a",
+    "-5": "#ef3b2c",
+    "-6": "#cb181d",
+    "-7": "#a50f15",
+    "-8": "#67000d",
+    "-9": "#fdd0a2",
+    "-10": "#fdae6b",
+    "-11": "#fd8d3c",
+    "-12": "#f16913",
+    "-13": "#d94801",
+    "-14": "#8c2d04",
+    "-15": "#662506",
 }
 
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
@@ -174,8 +207,7 @@ def plot_differentiation_tree(
     plt.show()
 
 
-def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None):
-    
+def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None, figsize=(8, 5), maxtime=None):
     # Heights from root
     height = {}
 
@@ -187,10 +219,7 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
     dfs(root, 0.0)
 
     # X positions: leaves first
-    leaves = [
-        v for v in nx.dfs_postorder_nodes(T, source=root)
-        if T.out_degree(v) == 0 and v != root
-    ]
+    leaves = [v for v in nx.dfs_postorder_nodes(T, source=root) if T.out_degree(v) == 0 and v != root]
     x = {leaf: i for i, leaf in enumerate(leaves)}
 
     def assign_x(n):
@@ -202,101 +231,68 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
 
     assign_x(root)
 
+    # Use negative heights for plotting (root at top)
     y = {n: -height[n] for n in T.nodes}
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=figsize)
 
-    # Draw rectangular structure
+    # Draw rectangular tree
     for u in T.nodes:
         children = list(T.successors(u))
         if not children:
             continue
-
         xs = [x[c] for c in children]
-
-        # horizontal bar at parent height
         ax.plot([min(xs), max(xs)], [y[u], y[u]], color="black")
-
-        # vertical branches + weights
         for c in children:
             color = "black"
             if red_edges and (u, c) in red_edges:
                 color = "red"
             ax.plot([x[c], x[c]], [y[u], y[c]], color=color)
-
             if add_labels:
-                # edge weight label (midpoint of vertical segment)
                 w = T[u][c]["weight"]
                 y_mid = (y[u] + y[c]) / 2
-                ax.text(
-                    x[c] + 0.05,
-                    y_mid,
-                    f"{w:.2f}",
-                    va="center",
-                    fontsize=8,
-                )
+                ax.text(x[c] + 0.05, y_mid, f"{w:.2f}", va="center", fontsize=8)
 
     # Draw nodes
     for n in T.nodes:
-        state = None
-        if "type" in T.nodes[n]:
-            state = T.nodes[n]["type"]
-        if "state" in T.nodes[n]:
-            state = T.nodes[n]["state"]
-        
+        state = T.nodes[n].get("type") or T.nodes[n].get("state")
         color = color_map.get(state, "black")
         ax.scatter(x[n], y[n], color=color, zorder=3, s=5)
         node_str = str(n)
+        if add_labels and state:
+            node_str += "\n(" + state + ")"
         if add_labels:
-            if state is not None:
-                node_str += "\n(" + state + ")"
-            ax.text(x[n] - 0.07, y[n] + 0.02, node_str, ha="center", fontsize=9)
+            ax.text(x[n], y[n] + 0.02, node_str, ha="center", fontsize=9)
 
+    # Draw differentiation times if provided
     if diff_T is not None:
         for n in diff_T.nodes:
             dt = diff_T.nodes[n].get("diff_time")
             if dt is not None:
                 ax.axhline(-dt)
-
                 children = list(diff_T.successors(n))
-                if not children: continue
-                label = str(n) + "→ {" +  ', '.join(map(str, children)) + "}"
-                ax.text(
-                    -0.15,
-                    -dt + 0.01,
-                    label,
-                    fontsize=9
-                )
-    
+                if children:
+                    label = f"{n}→ {{{', '.join(map(str, children))}}}"
+                    ax.text(-0.15, -dt + 0.01, label, fontsize=9)
+
+    # Optional horizontal lines at birth events
     if draw_birth_event_lines:
-        # ---- Horizontal lines at birth events (internal nodes) ----
         birth_nodes = [n for n in T.nodes if T.out_degree(n) > 1]
-
-        x_min = min(x.values())
-        x_max = max(x.values())
-
+        x_min, x_max = min(x.values()), max(x.values())
         for n in birth_nodes:
-            ax.hlines(
-                y[n],
-                xmin=x_min - 0.5,
-                xmax=x_max + 0.5,
-                colors="red",
-                linestyles="dashed",
-                alpha=0.6,
-                linewidth=1.2
-            )
+            ax.hlines(y[n], xmin=x_min - 0.5, xmax=x_max + 0.5, colors="red", linestyles="dashed", alpha=0.6, linewidth=1.2)
 
-    # ax.set_ylim(-1.0, 0.0)
-
-    major_ticks = np.linspace(0, 1, 21)
-    ax.set_yticks(major_ticks - 1)
+    # Set y-axis ticks properly
+    if maxtime is None:
+        maxtime = max(height.values())
+    major_ticks = np.linspace(0, maxtime, 21)
+    ax.set_yticks(-major_ticks)  # negative to match plotted y
     ax.set_yticklabels([f"{t:.2f}" for t in major_ticks], fontsize=8)
-
-    # ax.set_ylabel("Time")
+    ax.set_ylabel("Time")
 
     ax.set_xticks([])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["bottom"].set_visible(False)
-    
+
     plt.show()
