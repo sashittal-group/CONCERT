@@ -2,5 +2,6 @@
 .snakemake/
 
 data/
+outputs/
 
 __pycache__/

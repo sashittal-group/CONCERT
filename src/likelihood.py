@@ -406,22 +406,17 @@ def assign_states_to_internal_nodes(cell_lineage_T, diff_T, correct=False):
     lineage_nodes = list(cell_lineage_T.nodes(data=True))
     lineage_nodes.reverse()
     diff_nodes = list(diff_T.nodes(data=True))
-    for d in diff_nodes:
-        if d[1]['diff_time'] is not None:
-            d[1]['diff_time_rev'] = 1 - d[1]['diff_time']
-        else:
-            d[1]['diff_time_rev'] = None
-
+    
     combined_list = lineage_nodes + diff_nodes
         
     combined_list = [
         (n, d) for n, d in combined_list 
-        if d.get('T') is not None or d.get('diff_time_rev') is not None
+        if d.get('T') is not None or d.get('diff_time') is not None
     ]
 
     combined_sorted = sorted(
         combined_list,
-        key=lambda x: x[1].get('T', x[1].get('diff_time_rev'))
+        key=lambda x: x[1].get('T', x[1].get('diff_time'))
     )
 
     transform_map = {}
@@ -436,16 +431,9 @@ def assign_states_to_internal_nodes(cell_lineage_T, diff_T, correct=False):
             children_types = [cell_lineage_T.nodes[ch]['state'] 
                             for ch in children 
                             if 'state' in cell_lineage_T.nodes[ch]]
-            if node_id == 34:
-                for c in children:
-                    print(c, cell_lineage_T.nodes[c])
-                print(children, children_types)
-
+            
             children_types = [transform_map.get(t, t) for t in children_types]
 
-            if node_id == 34:
-                print(children, children_types)
-            
             if 'state' in node_data: continue
 
             unique_types = list(set(children_types))
@@ -467,7 +455,7 @@ def assign_states_to_internal_nodes(cell_lineage_T, diff_T, correct=False):
             else:
                 cell_lineage_T.nodes[node_id]["state"] = unique_types[0]
 
-        elif 'diff_time_rev' in node_data:
+        elif 'diff_time' in node_data:
 
             children = list(diff_T.successors(node_id))
             for child in children:
