@@ -403,6 +403,9 @@ def calculate_likelihood_2(
 
 def assign_states_to_internal_nodes(cell_lineage_T, diff_T, correct=False):
 
+    ## assumes both cell_lineaage_T and diff_T is reversed, i.e. time goes from leaves to root from 0 to 1.
+    
+
     lineage_nodes = list(cell_lineage_T.nodes(data=True))
     lineage_nodes.reverse()
     diff_nodes = list(diff_T.nodes(data=True))
