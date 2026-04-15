@@ -1,8 +1,7 @@
-from math import exp
+from math import exp, log
 import pandas as pd
 import numpy as np
 import networkx as nx
-from scipy.special import logsumexp
 from decimal import Decimal, getcontext
 
 
@@ -128,34 +127,25 @@ def calculate_likelihood_of_tree(
     return L[(root_node, root_child, root_time, diff_T_root)], L, U
 
 
-def calculate_log_likelihood_of_tree(
+
+def calculate_log_likelihood_graph_diff(
+    T: nx.DiGraph,
     birth_rates: dict,
     death_rates: dict,
     sampling_rate: float,
     transition_probabilities: pd.DataFrame,
-    cell_lineage_T,
-    diff_T,
-    root_time=1.0,
+    diff_T: nx.DiGraph,
 ):
-    # print("called")
-
-    ctx = getcontext()
-    ctx.prec = 200        # high precision
-    ctx.Emax = 99999999
-    ctx.Emin = -99999999
-
+    
     states = list(diff_T.nodes())
-    LL = dict()
     U = dict()
 
     for state in states:
         U[(state, 0)] = 1 - sampling_rate
     
     for diff_node in nx.dfs_postorder_nodes(diff_T):
-        # TODO(Samin): Make this reversal in a good place. Will forget soon!!
         diff_time = diff_T.nodes[diff_node]['diff_time']
         if diff_time is None: diff_time = 0
-        # else: diff_time = 1 - diff_time
 
         if diff_time > 0:
             U_t = 0
@@ -164,7 +154,6 @@ def calculate_log_likelihood_of_tree(
                 child_node = diff_T.nodes[child]
                 child_diff_time = child_node['diff_time']
                 if child_diff_time is None: child_diff_time = 0
-                # else: child_diff_time = 1 - child_diff_time
 
                 U_child = U[(child, child_diff_time)]
 
@@ -173,14 +162,21 @@ def calculate_log_likelihood_of_tree(
                 U_child_s = 1 - (birth_rates[child] - death_rates[child]) / \
                     (birth_rates[child] * (1 - (1 / C) * 
                                            exp( -(birth_rates[child] - death_rates[child]) * (diff_time - child_diff_time) )))
-
-                U_t += U_child_s * transition_probabilities.loc[diff_node, child]
+                
+                tp = transition_probabilities.loc[diff_node, child]
+                
+                U_t += U_child_s * tp
             
             U[(diff_node, diff_time)] = U_t
     
-    # print(U)
     
-    
+    ctx = getcontext()
+    ctx.prec = 50
+    ctx.Emax = 99999999
+    ctx.Emin = -99999999
+
+    LL = dict()
+
     def calculate_log_likelihood_along_edge(u, v, t, state):
         key = (u, v, t, state)
         if key in LL:
@@ -188,16 +184,15 @@ def calculate_log_likelihood_of_tree(
     
         diff_time = diff_T.nodes.get(state, {}).get('diff_time')
         if diff_time is None: diff_time = 0
-        # else: diff_time = 1 - diff_time
-
-        v_node = cell_lineage_T.nodes[v]
+        
+        v_node = T.nodes[v]
         v_t = v_node['T']
         
         if v_t < diff_time < t:  # Change of state within the edge
             
             U_t = U[(state, diff_time)]
-            ## TODO Fix the issue that requires the + 1e-50
-            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state])  + 1e-50)
+            ## TODO Fix the issue that requires the + 1e-200
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
 
             flow = exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time)) * \
                     ( (C - 1) / 
@@ -206,60 +201,55 @@ def calculate_log_likelihood_of_tree(
             p = Decimal(0)
             for child_state in diff_T.successors(state):
                 left_seg_ll = Decimal(calculate_log_likelihood_along_edge(u, v, diff_time, child_state))
+                # print("exp: ", left_seg_ll)
                 left_seg = left_seg_ll.exp()
                 p += Decimal(transition_probabilities.loc[state, child_state]) * left_seg
             
-            LL[key] = float(Decimal(flow).ln() + p)
-            # if key[0] == 'type_13_gen_2_72':
-            #     print("0 -> ", key, LL[key], Decimal(flow).ln(), p, '|', flow)
-            #     print('flow', C, exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time)))
-            #     print('U', (state, diff_time), (U_t - 1), (U_t - (death_rates[state] / birth_rates[state])))
-            
+            LL[key] = float(Decimal(flow).ln() + p.ln()) ## Why was ln not applied to p?
+
+            # assert not np.isnan(LL[key])
 
         else: # Edge ends with boundary condition
             
             U_t = U[(state, diff_time)]
-            ## TODO Fix the issue that requires the + 1e-50
-            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-50)
+            ## TODO Fix the issue that requires the + 1e-200
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
             flow = exp( -(birth_rates[state] - death_rates[state]) * (t - v_t)) * \
                     ( (C - exp( -(birth_rates[state] - death_rates[state]) * (v_t - diff_time))) / 
                       (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
-
-            # print(u, v, '|', C, '|', t, v_t, '=>', flow)
             
-            children = list(cell_lineage_T.successors(v))
+            children = list(T.successors(v))
             
             if len(children) == 0:  # Boundary condition: current time 
                 v_state = v_node['state']
                 if state == v_state or v_state == "?": 
                     p = sampling_rate
-                    LL[key] = np.log(flow) + np.log(p)
+                    LL[key] = log(flow) + log(p)
                 else: 
                     p = 0
                     LL[key] = -np.inf
+                # assert not np.isnan(LL[key]), (flow, p, C, U_t, birth_rates[state], death_rates[state], (U_t - 1), (U_t - (death_rates[state] / birth_rates[state]) + 1e-200))
             
             elif len(children) == 2:  # Boundary condition: birth event
                 LL1 = calculate_log_likelihood_along_edge(v, children[0], v_t, state)
                 LL2 = calculate_log_likelihood_along_edge(v, children[1], v_t, state)
-                LL[key] = np.log(flow) + LL1 + LL2 + np.log(birth_rates[state])
+                LL[key] = log(flow) + LL1 + LL2 + log(birth_rates[state])
 
-                # if key[0] == "type_15_gen_3_8" or \
-                #     key[0] == "type_15_gen_2_4" or \
-                #     key[0] == "type_13_gen_0_20" or \
-                #     key[0] == "type_13_gen_1_38":
-                #     print(key, LL[key], np.log(flow), LL1, LL2, np.log(birth_rates[state]))
+                # assert not np.isnan(LL[key])
 
             else:
                 raise Exception("#Children must be 0 or 2")
-
+        
+        # assert not np.isnan(LL[key])
+        
         return LL[key]
 
 
-    for parent in nx.dfs_postorder_nodes(cell_lineage_T):
-        node = cell_lineage_T.nodes[parent]
+    for parent in nx.dfs_postorder_nodes(T):
+        node = T.nodes[parent]
         node_time = node['T']
         node_state = node.get('state')
-        children = list(cell_lineage_T.successors(parent))
+        children = list(T.successors(parent))
         
         for child in children:
             if node_state is not None and node_state != "?":
@@ -268,11 +258,12 @@ def calculate_log_likelihood_of_tree(
                 for state in states:
                     calculate_log_likelihood_along_edge(parent, child, node_time, state)
     
-    root_node = cell_lineage_T.graph['root']
-    root_child = next(cell_lineage_T.successors(root_node))
+    root_node = [n for n, d in T.in_degree() if d == 0][0]
+    root_child = next(T.successors(root_node))
+    root_time = T.nodes[root_node]['T']
     diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
-    return LL[(root_node, root_child, root_time, diff_T_root)], LL, U
-
+    
+    return LL[(root_node, root_child, root_time, diff_T_root)]
 
 
 
