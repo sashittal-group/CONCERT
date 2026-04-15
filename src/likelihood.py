@@ -267,6 +267,191 @@ def calculate_log_likelihood_graph_diff(
 
 
 
+import numpy as np
+import networkx as nx
+from math import exp, log
+from scipy.special import logsumexp
+
+
+def calculate_log_likelihood_graph_diff_opt(
+    T: nx.DiGraph,
+    birth_rates: dict,
+    death_rates: dict,
+    sampling_rate: float,
+    transition_probabilities,
+    diff_T: nx.DiGraph,
+):
+    # =========================
+    # Precompute / Cache
+    # =========================
+    
+    states = list(diff_T.nodes())
+    n_states = len(states)
+    
+    state_index = {s: i for i, s in enumerate(states)}
+    TP = transition_probabilities.values
+
+    birth = np.array([birth_rates[s] for s in states])
+    death = np.array([death_rates[s] for s in states])
+    delta = birth - death
+    ratio = death / birth
+
+    diff_children = {n: list(diff_T.successors(n)) for n in states}
+    diff_time_map = {n: diff_T.nodes[n].get('diff_time') or 0 for n in states}
+
+    T_children = {n: list(T.successors(n)) for n in T.nodes}
+    T_time = {n: T.nodes[n]['T'] for n in T.nodes}
+    T_state = {n: T.nodes[n].get('state') for n in T.nodes}
+
+    diff_postorder = list(nx.dfs_postorder_nodes(diff_T))
+    T_postorder = list(nx.dfs_postorder_nodes(T))
+
+    log_sampling = log(sampling_rate)
+
+    # =========================
+    # U Computation (unchanged)
+    # =========================
+    
+    U = {}
+    for state in states:
+        U[(state, 0)] = 1 - sampling_rate
+
+    for diff_node in diff_postorder:
+        diff_time = diff_time_map[diff_node]
+
+        if diff_time > 0:
+            U_t = 0.0
+
+            for child in diff_children[diff_node]:
+                child_diff_time = diff_time_map[child]
+                U_child = U[(child, child_diff_time)]
+
+                idx_child = state_index[child]
+
+                C = (U_child - 1) / (U_child - ratio[idx_child])
+
+                exp_term = exp(-delta[idx_child] * (diff_time - child_diff_time))
+
+                U_child_s = 1 - (delta[idx_child]) / (
+                    birth[idx_child] * (1 - (1 / C) * exp_term)
+                )
+
+                tp = TP[state_index[diff_node], idx_child]
+                U_t += U_child_s * tp
+
+            U[(diff_node, diff_time)] = U_t
+
+    # =========================
+    # Log Likelihood DP
+    # =========================
+    
+    LL = {}
+
+    def calculate_log_likelihood_along_edge(u, v, t, state):
+        key = (u, v, t, state)
+        if key in LL:
+            return LL[key]
+
+        diff_time = diff_time_map.get(state, 0)
+        v_t = T_time[v]
+        idx_state = state_index[state]
+
+        U_t = U[(state, diff_time)]
+        C = (U_t - 1) / (U_t - ratio[idx_state] + 1e-200)
+
+        if v_t < diff_time < t:
+            dt = t - diff_time
+            exp_term = exp(-delta[idx_state] * dt)
+
+            flow = exp_term * ((C - 1) / (C - exp_term)) ** 2
+            log_flow = log(flow)
+
+            log_terms = []
+            for child_state in diff_children[state]:
+                idx_child = state_index[child_state]
+                tp = TP[idx_state, idx_child]
+
+                if tp == 0:
+                    continue
+
+                child_ll = calculate_log_likelihood_along_edge(
+                    u, v, diff_time, child_state
+                )
+
+                log_terms.append(log(tp) + child_ll)
+
+            if len(log_terms) == 0:
+                LL[key] = -np.inf
+            else:
+                LL[key] = log_flow + logsumexp(log_terms)
+
+        else:
+            dt1 = t - v_t
+            dt2 = v_t - diff_time
+            dt3 = t - diff_time
+
+            exp1 = exp(-delta[idx_state] * dt1)
+            exp2 = exp(-delta[idx_state] * dt2)
+            exp3 = exp(-delta[idx_state] * dt3)
+
+            flow = exp1 * ((C - exp2) / (C - exp3)) ** 2
+            log_flow = log(flow)
+
+            children = T_children[v]
+
+            if len(children) == 0:
+                v_state = T_state[v]
+
+                if state == v_state or v_state == "?":
+                    LL[key] = log_flow + log_sampling
+                else:
+                    LL[key] = -np.inf
+
+            elif len(children) == 2:
+                LL1 = calculate_log_likelihood_along_edge(v, children[0], v_t, state)
+                LL2 = calculate_log_likelihood_along_edge(v, children[1], v_t, state)
+
+                LL[key] = log_flow + LL1 + LL2 + log(birth[idx_state])
+
+            else:
+                raise Exception("#Children must be 0 or 2")
+
+        return LL[key]
+
+    # =========================
+    # Run DP
+    # =========================
+    
+    for parent in T_postorder:
+        node_time = T_time[parent]
+        node_state = T_state[parent]
+
+        for child in T_children[parent]:
+            if node_state is not None and node_state != "?":
+                calculate_log_likelihood_along_edge(
+                    parent, child, node_time, node_state
+                )
+            else:
+                for state in states:
+                    calculate_log_likelihood_along_edge(
+                        parent, child, node_time, state
+                    )
+
+    # =========================
+    # Root extraction
+    # =========================
+    
+    root_node = next(n for n, d in T.in_degree() if d == 0)
+    root_child = T_children[root_node][0]
+    root_time = T_time[root_node]
+
+    diff_root = next(n for n, d in diff_T.in_degree() if d == 0)
+
+    return LL[(root_node, root_child, root_time, diff_root)]
+
+
+
+
 def calculate_likelihood_2(
     birth_rates: dict,
     death_rates: dict,
