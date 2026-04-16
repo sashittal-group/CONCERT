@@ -154,6 +154,10 @@ def plot_differentiation_tree(
         label = f"{n}"
         if diff_T.nodes[n].get("diff_time") is not None:
             label += f"\nτ={diff_T.nodes[n]['diff_time']:.2f}"
+        if diff_T.nodes[n].get("diff_times") is not None:
+            times_str = ", ".join(f"{t:.2f}" for t in diff_T.nodes[n]["diff_times"] if t is not None)
+            if times_str:
+                label += f"\nτs=[{times_str}]"
         if birth_rates is not None:
             label += f"\n$\\mu_b$={birth_rates.get(n, 0):.2f}"
         if death_rates is not None:
