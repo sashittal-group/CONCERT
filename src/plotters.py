@@ -160,10 +160,20 @@ def plot_differentiation_tree(
             times_str = ", ".join(f"{t:.2f}" for t in diff_T.nodes[n]["diff_times"] if t is not None)
             if times_str:
                 label += f"\nτs=[{times_str}]"
-        if birth_rates is not None:
-            label += f"\n$\\mu_b$={birth_rates.get(n, 0):.2f}"
-        if death_rates is not None:
-            label += f"\n$\\mu_d$={death_rates.get(n, 0):.2f}"
+        if deflate_labels:
+            if f"{n}_0" in birth_rates:
+                label += f"\n$\\mu_b$={birth_rates.get(f'{n}_0', 0):.2f}"
+            else:
+                label += f"\n$\\mu_b$={birth_rates.get(n, 0):.2f}"
+            if f"{n}_0" in death_rates:
+                label += f"\n$\\mu_d$={death_rates.get(f'{n}_0', 0):.2f}"
+            else:
+                label += f"\n$\\mu_d$={death_rates.get(n, 0):.2f}"
+        else:
+            if birth_rates is not None:
+                label += f"\n$\\mu_b$={birth_rates.get(n, 0):.2f}"
+            if death_rates is not None:
+                label += f"\n$\\mu_d$={death_rates.get(n, 0):.2f}"
         node_labels[n] = label
 
     # Edge labels (transition probabilities)
