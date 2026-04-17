@@ -341,60 +341,50 @@ def calculate_log_likelihood_graph_diff(
             p = Decimal(0)
 
             for child_state in diff_T.successors(state):
-                left_ll = Decimal(
-                    calculate_log_likelihood_along_edge(u, v, diff_time, child_state)
-                )
-                left = left_ll.exp()
+                left_seg_ll = Decimal(calculate_log_likelihood_along_edge(u, v, diff_time, child_state))
+                # print("exp: ", left_seg_ll)
+                left_seg = left_seg_ll.exp()
+                p += Decimal(transition_probabilities.loc[state, child_state]) * left_seg
 
-                tp = Decimal(transition_probabilities.loc[state, child_state])
-                if tp < 0:
-                    raise RuntimeError("negative transition prob")
+                # if key[0] == 336 and key[1] == 346 and key[3].startswith("MP_0"):
+                #     print(f"Child state: {child_state}, left_seg_ll: {left_seg_ll}, left_seg: {left_seg}, tp: {transition_probabilities.loc[state, child_state]}, contrib: {Decimal(transition_probabilities.loc[state, child_state]) * left_seg}")
+                #     print(u, v, diff_time, child_state)
+            
+            
+            # if key[0] == 336 and key[1] == 346 and key[3].startswith("MP_0"):
+            #     print(key, flow, p, float(Decimal(flow).ln() + p.ln()))
+            
+            LL[key] = float(Decimal(flow).ln() + p.ln()) ## Why was ln not applied to p?
 
-                p += tp * left
+            # assert not np.isnan(LL[key])
 
-            if p <= 0:
-                explain_failure_at_state(T, diff_T, (u, v), state)
-                raise RuntimeError(f"mixture probability p=0 at state {state}")
-            LL[key] = float(Decimal(flow).ln() + p.ln())
-
-        # =====================
-        # Case 2: boundary
-        # =====================
-        else:
-            exp1 = exp(-(lam - mu) * (v_t - diff_time))
-            exp2 = exp(-(lam - mu) * (t - diff_time))
-
-            assert_finite(exp1, "exp1 invalid")
-            assert_finite(exp2, "exp2 invalid")
-
-            denom_flow = (C - exp2)
-            if abs(denom_flow) < 1e-12:
-                raise RuntimeError(
-                    f"flow denom ~0 (boundary): C={C}, exp2={exp2}"
-                )
-
-            flow = exp(-(lam - mu) * (t - v_t)) * ((C - exp1) / denom_flow) ** 2
-
-            if flow <= 0:
-                raise RuntimeError(f"flow <= 0: {flow}")
-            assert_finite(flow, "flow invalid")
-
+        else: # Edge ends with boundary condition
+            
+            U_t = U[(state, diff_time)]
+            ## TODO Fix the issue that requires the + 1e-200
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
+            flow = exp( -(birth_rates[state] - death_rates[state]) * (t - v_t)) * \
+                    ( (C - exp( -(birth_rates[state] - death_rates[state]) * (v_t - diff_time))) / 
+                      (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
+            
             children = list(T.successors(v))
-
-            # Leaf
-            if len(children) == 0:
-                v_state = T.nodes[v].get('state')
-
-                if state == v_state or v_state == "?":
-                    if sampling_rate <= 0:
-                        raise RuntimeError("log(0) from sampling rate")
-
-                    LL[key] = log(flow) + log(sampling_rate)
-                else:
+            
+            if len(children) == 0:  # Boundary condition: current time 
+                v_state = v_node['state']
+                if state == v_state or v_state == "?": 
+                    p = sampling_rate
+                    LL[key] = log(flow) + log(p)
+                    # if key[0] == 336 and key[1] == 346 and key[3].startswith("PGCLC"):
+                    #     print("correct")
+                else: 
+                    p = 0
                     LL[key] = -np.inf
-
-            # Birth
-            elif len(children) == 2:
+                # assert not np.isnan(LL[key]), (flow, p, C, U_t, birth_rates[state], death_rates[state], (U_t - 1), (U_t - (death_rates[state] / birth_rates[state]) + 1e-200))
+                # if key[0] == 336 and key[1] == 346 and key[3].startswith("PGCLC"):
+                #     # print(f"Boundary condition at leaf: v_state: {v_state}, state: {state}, flow: {flow}, p: {p}, log(flow): {log(flow)}, log(p): {log(p)}")
+                #     print(u, v, t, state, v_state, flow, p, LL[key])
+            
+            elif len(children) == 2:  # Boundary condition: birth event
                 LL1 = calculate_log_likelihood_along_edge(v, children[0], v_t, state)
                 LL2 = calculate_log_likelihood_along_edge(v, children[1], v_t, state)
 
@@ -507,9 +497,137 @@ def calculate_log_likelihood_graph_diff(
     root_child = next(T.successors(root_node))
     root_time = T.nodes[root_node]['T']
     diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
+    
+    return LL[(root_node, root_child, root_time, diff_T_root)], LL, U
 
-    result = LL[(root_node, root_child, root_time, diff_T_root)]
-    assert_finite(result, "final likelihood is NaN")
+
+
+from scipy.special import logsumexp
+
+def calculate_log_likelihood_graph_diff_opt2(
+    T: nx.DiGraph,
+    birth_rates: dict,
+    death_rates: dict,
+    sampling_rate: float,
+    transition_probabilities: pd.DataFrame,
+    diff_T: nx.DiGraph,
+):
+    
+    states = list(diff_T.nodes())
+    U = dict()
+
+    for state in states:
+        U[(state, 0)] = 1 - sampling_rate
+    
+    for diff_node in nx.dfs_postorder_nodes(diff_T):
+        diff_time = diff_T.nodes[diff_node]['diff_time']
+        if diff_time is None: diff_time = 0
+
+        if diff_time > 0:
+            U_t = 0
+            children = list(diff_T.successors(diff_node))
+            for child in children:
+                child_node = diff_T.nodes[child]
+                child_diff_time = child_node['diff_time']
+                if child_diff_time is None: child_diff_time = 0
+
+                U_child = U[(child, child_diff_time)]
+
+                C = (U_child - 1) / (U_child - (death_rates[child] / birth_rates[child]))
+                
+                U_child_s = 1 - (birth_rates[child] - death_rates[child]) / \
+                    (birth_rates[child] * (1 - (1 / C) * 
+                                           exp( -(birth_rates[child] - death_rates[child]) * (diff_time - child_diff_time) )))
+                
+                tp = transition_probabilities.loc[diff_node, child]
+                
+                U_t += U_child_s * tp
+            
+            U[(diff_node, diff_time)] = U_t
+
+    LL = dict()
+
+    def calculate_log_likelihood_along_edge(u, v, t, state):
+        key = (u, v, t, state)
+        if key in LL:
+            return LL[key]
+    
+        diff_time = diff_T.nodes.get(state, {}).get('diff_time')
+        if diff_time is None: diff_time = 0
+        
+        v_node = T.nodes[v]
+        v_t = v_node['T']
+        
+        if v_t < diff_time < t:
+            
+            U_t = U[(state, diff_time)]
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
+
+            flow = exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time)) * \
+                    ( (C - 1) / 
+                      (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
+
+            log_terms = []
+            for child_state in diff_T.successors(state):
+                tp = transition_probabilities.loc[state, child_state]
+                if tp == 0:
+                    continue
+
+                child_ll = calculate_log_likelihood_along_edge(u, v, diff_time, child_state)
+                log_terms.append(log(tp) + child_ll)
+
+            if len(log_terms) == 0:
+                LL[key] = -np.inf
+            else:
+                LL[key] = log(flow) + logsumexp(log_terms)
+
+        else:
+            
+            U_t = U[(state, diff_time)]
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
+
+            flow = exp( -(birth_rates[state] - death_rates[state]) * (t - v_t)) * \
+                    ( (C - exp( -(birth_rates[state] - death_rates[state]) * (v_t - diff_time))) / 
+                      (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
+            
+            children = list(T.successors(v))
+            
+            if len(children) == 0:
+                v_state = v_node['state']
+                if state == v_state or v_state == "?": 
+                    LL[key] = log(flow) + log(sampling_rate)
+                else: 
+                    LL[key] = -np.inf
+            
+            elif len(children) == 2:
+                LL1 = calculate_log_likelihood_along_edge(v, children[0], v_t, state)
+                LL2 = calculate_log_likelihood_along_edge(v, children[1], v_t, state)
+                LL[key] = log(flow) + LL1 + LL2 + log(birth_rates[state])
+
+            else:
+                raise Exception("#Children must be 0 or 2")
+        
+        return LL[key]
+
+    for parent in nx.dfs_postorder_nodes(T):
+        node = T.nodes[parent]
+        node_time = node['T']
+        node_state = node.get('state')
+        children = list(T.successors(parent))
+        
+        for child in children:
+            if node_state is not None and node_state != "?":
+                calculate_log_likelihood_along_edge(parent, child, node_time, node_state)
+            else:
+                for state in states:
+                    calculate_log_likelihood_along_edge(parent, child, node_time, state)
+    
+    root_node = [n for n, d in T.in_degree() if d == 0][0]
+    root_child = next(T.successors(root_node))
+    root_time = T.nodes[root_node]['T']
+    diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
+    
+    return LL[(root_node, root_child, root_time, diff_T_root)], LL, U
 
 
     return result
@@ -695,7 +813,7 @@ def calculate_log_likelihood_graph_diff_opt(
 
     diff_root = next(n for n, d in diff_T.in_degree() if d == 0)
 
-    return LL[(root_node, root_child, root_time, diff_root)]
+    return LL[(root_node, root_child, root_time, diff_root)], LL, U
 
 
 

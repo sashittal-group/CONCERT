@@ -137,6 +137,7 @@ def plot_differentiation_tree(
     death_rates=None,
     transition_probabilities=None,
     show_labels=True,
+    deflate_labels=False,
     figsize=(6, 5),
 ):
     """
@@ -145,6 +146,7 @@ def plot_differentiation_tree(
     Nodes: cell types (showing τ, b, d)
     Edges: differentiation paths (showing transition probabilities)
     """
+    diff_T = diff_T.copy()  # avoid modifying original graph
     plt.figure(figsize=figsize)
     pos = nx.nx_agraph.graphviz_layout(diff_T, prog="dot")
 
@@ -167,11 +169,31 @@ def plot_differentiation_tree(
     # Edge labels (transition probabilities)
     edge_labels = {}
     if transition_probabilities is not None:
-        for u, v in diff_T.edges:
-            prob = transition_probabilities.loc[u, v] if (
-                u in transition_probabilities.index and v in transition_probabilities.columns
-            ) else 0.0
-            edge_labels[(u, v)] = f"{prob:.3f}"
+        if deflate_labels:
+            for u, v in diff_T.edges:
+                uc = u
+                vc = v
+                if f"{u}_0" in transition_probabilities.index:
+                    uc = f"{u}_0"
+                if f"{v}_0" in transition_probabilities.columns:
+                    vc = f"{v}_0"
+
+                prob = transition_probabilities.loc[uc, vc] if (
+                    uc in transition_probabilities.index and vc in transition_probabilities.columns
+                ) else 0.0
+                edge_labels[(u, v)] = f"{prob:.3f}"
+            
+            for n in diff_T.nodes:
+                if f"{n}_0" in transition_probabilities.index:
+                    edge_labels[(n, n)] = f"{transition_probabilities.loc[f'{n}_0', f'{n}_1']:.3f}"
+                    diff_T.add_edge(n, n)  # self-loop for deflated node
+        
+        else:
+            for u, v in diff_T.edges:
+                prob = transition_probabilities.loc[u, v] if (
+                    u in transition_probabilities.index and v in transition_probabilities.columns
+                ) else 0.0
+                edge_labels[(u, v)] = f"{prob:.3f}"
 
     # Node colors
     node_colors = [color_map.get(n, "lightblue") if color_map else "lightblue" for n in diff_T.nodes()]
