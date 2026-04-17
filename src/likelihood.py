@@ -185,104 +185,40 @@ def calculate_log_likelihood_graph_diff(
     transition_probabilities: pd.DataFrame,
     diff_T: nx.DiGraph,
 ):
-    # =========================
-    # Helper assertions
-    # =========================
-    def assert_finite(x, msg):
-        if not np.isfinite(x):
-            raise RuntimeError(f"{msg}: {x}")
-
-    def assert_prob(x, msg, eps=1e-12):
-        assert_finite(x, msg)
-        if not (-eps <= x <= 1 + eps):
-            raise RuntimeError(f"{msg}: not in [0,1], got {x}")
-
-    # =========================
-    # Input validation
-    # =========================
-    for s in birth_rates:
-        if birth_rates[s] <= 0:
-            raise RuntimeError(f"birth rate <= 0 for state {s}")
-        if death_rates[s] < 0:
-            raise RuntimeError(f"death rate < 0 for state {s}")
-        if birth_rates[s] == death_rates[s]:
-            raise RuntimeError(f"degenerate case λ=μ at state {s}")
-
-    if not (0 <= sampling_rate <= 1):
-        raise RuntimeError(f"invalid sampling rate {sampling_rate}")
-
-    for i in transition_probabilities.index:
-        row_sum = transition_probabilities.loc[i].sum()
-        if abs(row_sum - 1) > 1e-6:
-            raise RuntimeError(f"transition row {i} not stochastic: {row_sum}")
-
-    # =========================
-    # Compute U
-    # =========================
     states = list(diff_T.nodes())
     U = dict()
 
     for state in states:
         U[(state, 0)] = 1 - sampling_rate
-        assert_prob(U[(state, 0)], f"U init invalid at {state}")
 
     for diff_node in nx.dfs_postorder_nodes(diff_T):
-        diff_time = diff_T.nodes[diff_node].get('diff_time') or 0
+        diff_time = diff_T.nodes[diff_node]['diff_time']
+        if diff_time is None:
+            diff_time = 0
 
         if diff_time > 0:
             U_t = 0
             children = list(diff_T.successors(diff_node))
-
             for child in children:
-                child_diff_time = diff_T.nodes[child].get('diff_time') or 0
-
-                if child_diff_time > diff_time:
-                    raise RuntimeError(
-                        f"time violation: child {child_diff_time} > parent {diff_time}"
-                    )
+                child_node = diff_T.nodes[child]
+                child_diff_time = child_node['diff_time']
+                if child_diff_time is None:
+                    child_diff_time = 0
 
                 U_child = U[(child, child_diff_time)]
-                assert_prob(U_child, f"U_child invalid at {child}")
 
-                lam = birth_rates[child]
-                mu = death_rates[child]
+                C = (U_child - 1) / (U_child - (death_rates[child] / birth_rates[child]))
 
-                denom = (U_child - (mu / lam))
-                if abs(denom) < 1e-12:
-                    raise RuntimeError(
-                        f"C denom ~0 at child={child}, U={U_child}, mu/lambda={mu/lam}"
-                    )
-
-                C = (U_child - 1) / denom
-                assert_finite(C, f"C invalid at {child}")
-
-                delta_t = diff_time - child_diff_time
-                if delta_t < 0:
-                    raise RuntimeError(f"negative time diff at {child}")
-
-                exp_term = exp(-(lam - mu) * delta_t)
-                assert_finite(exp_term, f"exp overflow at {child}")
-
-                denom2 = (1 - (1 / C) * exp_term)
-                if abs(denom2) < 1e-12:
-                    raise RuntimeError(
-                        f"U_child_s denom ~0 at {child}, C={C}, exp={exp_term}"
-                    )
-
-                U_child_s = 1 - (lam - mu) / (lam * denom2)
-                assert_prob(U_child_s, f"U_child_s invalid at {child}")
+                U_child_s = 1 - (birth_rates[child] - death_rates[child]) / \
+                    (birth_rates[child] * (1 - (1 / C) *
+                                           exp(-(birth_rates[child] - death_rates[child]) * (diff_time - child_diff_time))))
 
                 tp = transition_probabilities.loc[diff_node, child]
-                assert_prob(tp, f"transition prob invalid {diff_node}->{child}")
 
                 U_t += U_child_s * tp
 
-            assert_prob(U_t, f"U_t invalid at {diff_node}")
             U[(diff_node, diff_time)] = U_t
 
-    # =========================
-    # Decimal precision
-    # =========================
     ctx = getcontext()
     ctx.prec = 50
     ctx.Emax = 99999999
@@ -290,56 +226,29 @@ def calculate_log_likelihood_graph_diff(
 
     LL = dict()
 
-    # =========================
-    # Recursive likelihood
-    # =========================
     def calculate_log_likelihood_along_edge(u, v, t, state):
         key = (u, v, t, state)
         if key in LL:
             return LL[key]
 
-        diff_time = diff_T.nodes.get(state, {}).get('diff_time') or 0
-        v_t = T.nodes[v]['T']
+        diff_time = diff_T.nodes.get(state, {}).get('diff_time')
+        if diff_time is None:
+            diff_time = 0
 
-        lam = birth_rates[state]
-        mu = death_rates[state]
+        v_node = T.nodes[v]
+        v_t = v_node['T']
 
-        U_t = U[(state, diff_time)]
-        assert_prob(U_t, f"U_t invalid at state {state}")
+        if v_t < diff_time < t:  # Change of state within the edge
 
-        denom = (U_t - (mu / lam))
-        if abs(denom) < 1e-12:
-            raise RuntimeError(
-                f"C denom ~0 at state={state}, U={U_t}, mu/lambda={mu/lam}"
-            )
+            U_t = U[(state, diff_time)]
+            ## TODO Fix the issue that requires the + 1e-200
+            C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
 
-        C = (U_t - 1) / denom
-        assert_finite(C, f"C invalid at state {state}")
-
-        # =====================
-        # Case 1: state change
-        # =====================
-        if v_t <= diff_time <= t:
-            delta = t - diff_time
-            if delta < 0:
-                raise RuntimeError("negative delta")
-
-            exp_term = exp(-(lam - mu) * delta)
-            assert_finite(exp_term, "exp overflow")
-
-            denom_flow = (C - exp_term)
-            if abs(denom_flow) < 1e-12:
-                raise RuntimeError(
-                    f"flow denom ~0 (state change): C={C}, exp={exp_term}"
-                )
-
-            flow = exp_term * ((C - 1) / denom_flow) ** 2
-            if flow <= 0:
-                raise RuntimeError(f"flow <= 0: {flow}")
-            assert_finite(flow, "flow invalid")
+            flow = exp(-(birth_rates[state] - death_rates[state]) * (t - diff_time)) * \
+                   ((C - 1) /
+                    (C - exp(-(birth_rates[state] - death_rates[state]) * (t - diff_time)))) ** 2
 
             p = Decimal(0)
-
             for child_state in diff_T.successors(state):
                 left_seg_ll = Decimal(calculate_log_likelihood_along_edge(u, v, diff_time, child_state))
                 # print("exp: ", left_seg_ll)
@@ -349,60 +258,57 @@ def calculate_log_likelihood_graph_diff(
                 # if key[0] == 336 and key[1] == 346 and key[3].startswith("MP_0"):
                 #     print(f"Child state: {child_state}, left_seg_ll: {left_seg_ll}, left_seg: {left_seg}, tp: {transition_probabilities.loc[state, child_state]}, contrib: {Decimal(transition_probabilities.loc[state, child_state]) * left_seg}")
                 #     print(u, v, diff_time, child_state)
-            
-            
+
             # if key[0] == 336 and key[1] == 346 and key[3].startswith("MP_0"):
             #     print(key, flow, p, float(Decimal(flow).ln() + p.ln()))
-            
-            LL[key] = float(Decimal(flow).ln() + p.ln()) ## Why was ln not applied to p?
+
+            LL[key] = float(Decimal(flow).ln() + p.ln())  ## Why was ln not applied to p?
 
             # assert not np.isnan(LL[key])
 
-        else: # Edge ends with boundary condition
-            
+        else:  # Edge ends with boundary condition
+
             U_t = U[(state, diff_time)]
             ## TODO Fix the issue that requires the + 1e-200
             C = (U_t - 1) / (U_t - (death_rates[state] / birth_rates[state]) + 1e-200)
-            flow = exp( -(birth_rates[state] - death_rates[state]) * (t - v_t)) * \
-                    ( (C - exp( -(birth_rates[state] - death_rates[state]) * (v_t - diff_time))) / 
-                      (C - exp( -(birth_rates[state] - death_rates[state]) * (t - diff_time))) ) ** 2
-            
+
+            flow = exp(-(birth_rates[state] - death_rates[state]) * (t - v_t)) * \
+                   ((C - exp(-(birth_rates[state] - death_rates[state]) * (v_t - diff_time))) /
+                    (C - exp(-(birth_rates[state] - death_rates[state]) * (t - diff_time)))) ** 2
+
             children = list(T.successors(v))
-            
-            if len(children) == 0:  # Boundary condition: current time 
+
+            if len(children) == 0:  # Boundary condition: current time
                 v_state = v_node['state']
-                if state == v_state or v_state == "?": 
+                if state == v_state or v_state == "?":
                     p = sampling_rate
                     LL[key] = log(flow) + log(p)
                     # if key[0] == 336 and key[1] == 346 and key[3].startswith("PGCLC"):
                     #     print("correct")
-                else: 
+                else:
                     p = 0
                     LL[key] = -np.inf
+
                 # assert not np.isnan(LL[key]), (flow, p, C, U_t, birth_rates[state], death_rates[state], (U_t - 1), (U_t - (death_rates[state] / birth_rates[state]) + 1e-200))
+
                 # if key[0] == 336 and key[1] == 346 and key[3].startswith("PGCLC"):
                 #     # print(f"Boundary condition at leaf: v_state: {v_state}, state: {state}, flow: {flow}, p: {p}, log(flow): {log(flow)}, log(p): {log(p)}")
                 #     print(u, v, t, state, v_state, flow, p, LL[key])
-            
+
             elif len(children) == 2:  # Boundary condition: birth event
                 LL1 = calculate_log_likelihood_along_edge(v, children[0], v_t, state)
                 LL2 = calculate_log_likelihood_along_edge(v, children[1], v_t, state)
-
-                if birth_rates[state] <= 0:
-                    raise RuntimeError("invalid birth rate in log")
-
                 LL[key] = log(flow) + LL1 + LL2 + log(birth_rates[state])
 
-            else:
-                raise RuntimeError("#Children must be 0 or 2")
+                # assert not np.isnan(LL[key])
 
-        # assert_finite(LL[key], f"LL is NaN at key {key}")
+            else:
+                raise Exception("#Children must be 0 or 2")
+
+        # assert not np.isnan(LL[key])
 
         return LL[key]
 
-    # =========================
-    # Traverse tree
-    # =========================
     for parent in nx.dfs_postorder_nodes(T):
         node = T.nodes[parent]
         node_time = node['T']
@@ -416,89 +322,13 @@ def calculate_log_likelihood_graph_diff(
                 for state in states:
                     calculate_log_likelihood_along_edge(parent, child, node_time, state)
 
-    def debug_ll_path(LL, T, diff_T, top_k=3):
-        import numpy as np
-        from collections import defaultdict
-
-        # -------------------------
-        # Group LL by edge
-        # -------------------------
-        edge_map = defaultdict(dict)
-        for (u, v, t, state), val in LL.items():
-            edge_map[(u, v, t)][state] = val
-
-        def summarize_edge(u, v, t):
-            states_dict = edge_map[(u, v, t)]
-
-            items = list(states_dict.items())
-            items.sort(key=lambda x: x[1], reverse=True)
-
-            best_state, best_val = items[0]
-            all_neg_inf = all(np.isneginf(val) for _, val in items)
-
-            print(f"\nEDGE ({u} → {v}, t={t:.4f})")
-
-            if all_neg_inf:
-                print("  ❌ ALL STATES = -inf → FAILURE HERE")
-            else:
-                print(f"  ✅ best state: {best_state}, LL={best_val:.4f}")
-
-            print("  top states:")
-            for s, val in items[:top_k]:
-                print(f"    {s}: {val}")
-
-            return best_state, best_val, all_neg_inf
-
-        # -------------------------
-        # Find root edge
-        # -------------------------
-        root = [n for n, d in T.in_degree() if d == 0][0]
-        child = next(T.successors(root))
-        t0 = T.nodes[root]['T']
-
-        print("==== DEBUGGING LL PATH ====")
-
-        # -------------------------
-        # Recursive descent
-        # -------------------------
-        def recurse(u, v, t, depth=0):
-            indent = "  " * depth
-
-            if (u, v, t) not in edge_map:
-                print(indent + f"Missing edge ({u},{v},{t}) in LL")
-                return
-
-            best_state, best_val, failed = summarize_edge(u, v, t)
-
-            if failed:
-                print(indent + "STOP: all states impossible")
-                return
-
-            # descend if binary split
-            children = list(T.successors(v))
-
-            if len(children) == 0:
-                print(indent + "Reached leaf")
-                return
-
-            if len(children) == 2:
-                t_child = T.nodes[v]['T']
-                recurse(v, children[0], t_child, depth + 1)
-                recurse(v, children[1], t_child, depth + 1)
-
-        recurse(root, child, t0)
-    
-    debug_ll_path(LL, T, diff_T)
-
-    # =========================
-    # Root likelihood
-    # =========================
     root_node = [n for n, d in T.in_degree() if d == 0][0]
     root_child = next(T.successors(root_node))
     root_time = T.nodes[root_node]['T']
     diff_T_root = [n for n, d in diff_T.in_degree() if d == 0][0]
-    
+
     return LL[(root_node, root_child, root_time, diff_T_root)], LL, U
+
 
 
 
