@@ -48,6 +48,9 @@ color_map = {
     "-13": "#d94801",
     "-14": "#8c2d04",
     "-15": "#662506",
+    "K1": "blue",
+    "T1": "green",
+    "N1": "orange",
 }
 
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
@@ -305,11 +308,11 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
         for n in diff_T.nodes:
             dt = diff_T.nodes[n].get("diff_time")
             if dt is not None:
-                ax.axhline(-dt)
+                ax.axhline(-dt, zorder=10)
                 children = list(diff_T.successors(n))
                 if children:
                     label = f"{n}→ {{{', '.join(map(str, children))}}}"
-                    ax.text(-0.15, -dt + 0.01, label, fontsize=9)
+                    ax.text(-0.15, -dt + 0.01, label, fontsize=9, zorder=11)
 
     # Optional horizontal lines at birth events
     if draw_birth_event_lines:

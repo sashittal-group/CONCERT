@@ -238,7 +238,15 @@ def calculate_log_likelihood_graph_diff(
         v_node = T.nodes[v]
         v_t = v_node['T']
 
+        if key[0] == 38 and key[1] == 39:
+            print(f"({u} → {v}) @ {t} | state {state} | diff_time {diff_time} | v_t {v_t}")
+
+
         if v_t < diff_time < t:  # Change of state within the edge
+
+            if key[0] == 38 and key[1] == 39:
+                # print(flow, p, log(flow), log(p), LL[key])
+                print("incorrect")
 
             U_t = U[(state, diff_time)]
             ## TODO Fix the issue that requires the + 1e-200
@@ -283,8 +291,6 @@ def calculate_log_likelihood_graph_diff(
                 if state == v_state or v_state == "?":
                     p = sampling_rate
                     LL[key] = log(flow) + log(p)
-                    # if key[0] == 336 and key[1] == 346 and key[3].startswith("PGCLC"):
-                    #     print("correct")
                 else:
                     p = 0
                     LL[key] = -np.inf
@@ -848,7 +854,7 @@ def add_node_times(cell_lineage_T, root=0, reverse=True):
     distances = nx.single_source_dijkstra_path_length(cell_lineage_T, root, weight='weight')
     for node, dist in distances.items():
         if reverse:
-            cell_lineage_T.nodes[node]['T'] = 1 - dist
+            cell_lineage_T.nodes[node]['T'] = max(1 - dist, 0)
         else:
             cell_lineage_T.nodes[node]['T'] = dist
     
