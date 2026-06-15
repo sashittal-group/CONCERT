@@ -1,3 +1,4 @@
+import csv
 import random
 import string
 import sys
@@ -237,6 +238,224 @@ def simulate_multitype_bd_with_diff(
     return G, root
 
 
+def simulate_multitype_bd_ctmc(
+    birth_rates,
+    death_rates,
+    sampling_rates,
+    Q,
+    T,
+    root_type="A",
+    seed=None
+):
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    G = nx.DiGraph()
+
+    next_node = 0
+
+    root = next_node
+    next_node += 1
+
+    G.add_node(
+        root,
+        time=0.0,
+        event="root",
+        type=root_type
+    )
+
+    child = next_node
+    next_node += 1
+
+    G.add_node(
+        child,
+        time=None,
+        event=None,
+        type=root_type
+    )
+
+    G.add_edge(
+        root,
+        child,
+        start_time=0.0,
+        end_time=None,
+        length=None
+    )
+
+    alive = [(root, child, root_type)]
+
+    t = 0.0
+
+    while alive and t < T:
+
+        lineage_rates = []
+        total_rate = 0.0
+
+        for parent, tip, state in alive:
+
+            q_out = float(Q.loc[state].sum())
+
+            r = (
+                birth_rates[state]
+                + death_rates[state]
+                + q_out
+            )
+
+            lineage_rates.append(r)
+            total_rate += r
+
+        if total_rate == 0:
+            break
+
+        dt = np.random.exponential(
+            1.0 / total_rate
+        )
+
+        if t + dt >= T:
+            break
+
+        t += dt
+
+        # choose lineage
+
+        r = np.random.uniform(0, total_rate)
+
+        cumulative = 0.0
+
+        for idx, rate in enumerate(lineage_rates):
+            cumulative += rate
+
+            if r <= cumulative:
+                chosen = idx
+                break
+
+        parent, tip, state = alive.pop(chosen)
+
+        lam = birth_rates[state]
+        mu = death_rates[state]
+
+        transitions = {
+            d: float(Q.loc[state, d])
+            for d in Q.columns
+            if float(Q.loc[state, d]) > 0
+        }
+
+        event_rates = [lam, mu]
+        event_labels = ["birth", "death"]
+
+        for d, q in transitions.items():
+            event_rates.append(q)
+            event_labels.append(("transition", d))
+
+        total = sum(event_rates)
+
+        u = np.random.uniform(0, total)
+
+        cumulative = 0.0
+
+        chosen_event = None
+
+        for rate, label in zip(
+            event_rates,
+            event_labels
+        ):
+            cumulative += rate
+
+            if u <= cumulative:
+                chosen_event = label
+                break
+
+        # close current branch
+
+        G.nodes[tip]["time"] = t
+
+        G.edges[parent, tip]["end_time"] = t
+
+        G.edges[parent, tip]["length"] = (
+            t
+            - G.edges[parent, tip]["start_time"]
+        )
+
+        if chosen_event == "birth":
+
+            G.nodes[tip]["event"] = "birth"
+
+            for _ in range(2):
+
+                c = next_node
+                next_node += 1
+
+                G.add_node(
+                    c,
+                    time=None,
+                    event=None,
+                    type=state
+                )
+
+                G.add_edge(
+                    tip,
+                    c,
+                    start_time=t,
+                    end_time=None,
+                    length=None
+                )
+
+                alive.append(
+                    (tip, c, state)
+                )
+
+        elif chosen_event == "death":
+
+            G.nodes[tip]["event"] = "death"
+
+        else:
+
+            _, new_state = chosen_event
+
+            G.nodes[tip]["event"] = "transition"
+
+            c = next_node
+            next_node += 1
+
+            G.add_node(
+                c,
+                time=None,
+                event=None,
+                type=new_state
+            )
+
+            G.add_edge(
+                tip,
+                c,
+                start_time=t,
+                end_time=None,
+                length=None
+            )
+
+            alive.append(
+                (tip, c, new_state)
+            )
+
+    # truncate surviving branches
+
+    for parent, tip, state in alive:
+
+        G.nodes[tip]["time"] = T
+
+        G.edges[parent, tip]["end_time"] = T
+        G.edges[parent, tip]["length"] = (
+            T - G.edges[parent, tip]["start_time"]
+        )
+
+        if np.random.random() < sampling_rates[state]:
+            G.nodes[tip]["event"] = "sample"
+        else:
+            G.nodes[tip]["event"] = "unsampled"
+
+
+    return G, root
+
 
 def filter_extant_lineages(G, root):
     """
@@ -255,7 +474,7 @@ def filter_extant_lineages(G, root):
         parent = next(iter(H.predecessors(v)), None)
 
         # ---------- rule 1: death events ----------
-        if event == "death":
+        if event in {"death", "unsampled"}:
             if parent is not None:
                 H.remove_edge(parent, v)
             H.remove_node(v)
@@ -333,8 +552,44 @@ def load_tree(filename):
 
 
 
+def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
+    # --- write nodes ---
+    with open(node_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["node_id", "T", "is_leaf", "state_id"])
 
-if __name__ == "__main__":
+        for n, data in T.nodes(data=True):
+            state = data.get("type")
+            is_leaf = data.get("event") == "sample"
+
+            # hard mapping
+            if not is_leaf or state is None or state == "?":
+                sid = -1
+            else:
+                sid = ord(state) - ord('A')
+
+            writer.writerow([
+                n,
+                float(data["time"]),
+                int(is_leaf),
+                sid
+            ])
+
+    # --- write edges ---
+    with open(edge_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["parent", "child", "branch_length"])
+
+        for u, v, data in T.edges(data=True):
+            writer.writerow([
+                u,
+                v,
+                float(data.get("weight", 0.0))
+            ])
+
+
+
+def main2():
     from src.plotters import plot_simulated_lineage_tree
 
     parser = argparse.ArgumentParser()
@@ -410,3 +665,68 @@ if __name__ == "__main__":
         plt.close()
     except Exception as e:
         print(f"Plotting failed: {e}")
+
+
+
+def main():
+    from src.plotters import plot_simulated_lineage_tree
+
+    G, root = simulate_multitype_bd_ctmc(
+        birth_rates={
+            "A": 7.0,
+            "B": 5.5,
+            "C": 3.5,
+        },
+        death_rates={
+            "A": 0.2,
+            "B": 0.1,
+            "C": 0.1,
+        },
+        sampling_rates={
+            "A": 0.5,
+            "B": 0.5,
+            "C": 0.5,
+        },
+        Q=pd.DataFrame(
+            [
+                [0.0, 1.0, 1.5],
+                [0.0, 0.0, 0.8],
+                [0.0, 0.0, 0.0],
+            ],
+            index=["A","B","C"],
+            columns=["A","B","C"]
+        ),
+        T=1.0,
+        root_type="A",
+        seed=0
+    )
+
+    save_dir = "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/0"
+
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    print(G.nodes(data=True))
+   
+    save_tree(G, root, f"{save_dir}/T.json")
+    G_extant = filter_extant_lineages(G, root)
+    save_tree(G_extant, root, f"{save_dir}/T_extant.json")
+
+    export_tree(G_extant, f"{save_dir}/nodes.csv", f"{save_dir}/edges.csv")
+
+
+    try:
+        plot_simulated_lineage_tree(G, root)
+        plt.savefig(f"{save_dir}/T.png")
+        plt.close()
+
+        plot_simulated_lineage_tree(G_extant, root)
+        plt.savefig(f"{save_dir}/T_extant.png")
+        plt.close()
+    except Exception as e:
+        print(f"Plotting failed: {e}")
+
+
+
+if __name__ == "__main__":
+    main()
