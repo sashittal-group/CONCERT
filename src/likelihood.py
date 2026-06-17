@@ -851,7 +851,7 @@ def assign_states_to_internal_nodes(cell_lineage_T, diff_T, correct=False):
 
 
 def add_node_times(cell_lineage_T, root=0, reverse=True):
-    distances = nx.single_source_dijkstra_path_length(cell_lineage_T, root, weight='weight')
+    distances = nx.single_source_dijkstra_path_length(cell_lineage_T, root, weight='length')
     for node, dist in distances.items():
         if reverse:
             cell_lineage_T.nodes[node]['T'] = max(1 - dist, 0)

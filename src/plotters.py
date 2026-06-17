@@ -116,7 +116,7 @@ def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
         for n in G.nodes():
             x = x_pos[n]
             y = G.nodes[n]["time"]
-            typ = G.nodes[n]["type"]
+            typ = G.nodes[n]["state"]
             label = f"{n}\n({typ})"
             ax.text(x + 0.12, y, label, fontsize=8, ha="center", va="bottom")
 
@@ -253,7 +253,7 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
     def dfs(n, h):
         height[n] = h
         for c in T.successors(n):
-            dfs(c, h + T[n][c]["weight"])
+            dfs(c, h + T[n][c]["length"])
 
     dfs(root, 0.0)
 
@@ -288,13 +288,13 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
                 color = "red"
             ax.plot([x[c], x[c]], [y[u], y[c]], color=color)
             if add_labels:
-                w = T[u][c]["weight"]
+                w = T[u][c]["length"]
                 y_mid = (y[u] + y[c]) / 2
                 ax.text(x[c] + 0.05, y_mid, f"{w:.2f}", va="center", fontsize=8)
 
     # Draw nodes
     for n in T.nodes:
-        state = T.nodes[n].get("type") or T.nodes[n].get("state")
+        state = T.nodes[n].get("state") or T.nodes[n].get("state")
         color = color_map.get(state, "black")
         ax.scatter(x[n], y[n], color=color, zorder=3, s=5)
         node_str = str(n)

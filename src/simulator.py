@@ -97,7 +97,7 @@ def simulate_multitype_bd_with_diff(
     Qs,
     diff_T,
     time_length,
-    root_type="A",
+    root_state="A",
     seed=None
 ):
     if seed is not None:
@@ -109,14 +109,14 @@ def simulate_multitype_bd_with_diff(
 
     root = next_node
     next_node += 1
-    G.add_node(root, time=0.0, event="root", type=root_type)
+    G.add_node(root, time=0.0, event="root", state=root_state)
 
     child = next_node
     next_node += 1
-    G.add_node(child, time=None, event=None, type=root_type)
+    G.add_node(child, time=None, event=None, state=root_state)
     G.add_edge(root, child, start_time=0.0, end_time=None, length=None)
 
-    alive = [(root, child, root_type)]
+    alive = [(root, child, root_state)]
 
     t = 0.0
 
@@ -173,7 +173,7 @@ def simulate_multitype_bd_with_diff(
                 for _ in range(2):
                     c = next_node
                     next_node += 1
-                    G.add_node(c, time=None, event=None, type=typ)
+                    G.add_node(c, time=None, event=None, state=typ)
                     G.add_edge(tip, c, start_time=t, end_time=None, length=None)
                     alive.append((tip, c, typ))
             else:
@@ -214,7 +214,7 @@ def simulate_multitype_bd_with_diff(
 
                         c = next_node
                         next_node += 1
-                        G.add_node(c, time=None, event=None, type=new_type)
+                        G.add_node(c, time=None, event=None, state=new_type)
                         G.add_edge(tip, c, start_time=t, end_time=None, length=None)
 
                         new_alive.append((tip, c, new_type))
@@ -244,7 +244,7 @@ def simulate_multitype_bd_ctmc(
     sampling_rates,
     Q,
     T,
-    root_type="A",
+    root_state="A",
     seed=None
 ):
     if seed is not None:
@@ -262,7 +262,7 @@ def simulate_multitype_bd_ctmc(
         root,
         time=0.0,
         event="root",
-        type=root_type
+        state=root_state
     )
 
     child = next_node
@@ -272,7 +272,7 @@ def simulate_multitype_bd_ctmc(
         child,
         time=None,
         event=None,
-        type=root_type
+        state=root_state
     )
 
     G.add_edge(
@@ -283,7 +283,7 @@ def simulate_multitype_bd_ctmc(
         length=None
     )
 
-    alive = [(root, child, root_type)]
+    alive = [(root, child, root_state)]
 
     t = 0.0
 
@@ -390,7 +390,7 @@ def simulate_multitype_bd_ctmc(
                     c,
                     time=None,
                     event=None,
-                    type=state
+                    state=state
                 )
 
                 G.add_edge(
@@ -422,7 +422,7 @@ def simulate_multitype_bd_ctmc(
                 c,
                 time=None,
                 event=None,
-                type=new_state
+                state=new_state
             )
 
             G.add_edge(
@@ -474,14 +474,14 @@ def filter_extant_lineages(G, root):
         parent = next(iter(H.predecessors(v)), None)
 
         # ---------- rule 1: death events ----------
-        if event in {"death", "unsampled"}:
+        if event == "death" or event == "unsampled":
             if parent is not None:
                 H.remove_edge(parent, v)
             H.remove_node(v)
             continue
 
         # ---------- rule 2 & 3: birth events ----------
-        if event == "birth" or event == "diff":
+        if event == "birth" or event == "diff" or event == "transition":
             children = list(H.successors(v))
 
             # no surviving children → delete birth
@@ -559,7 +559,7 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
         writer.writerow(["node_id", "T", "is_leaf", "state_id"])
 
         for n, data in T.nodes(data=True):
-            state = data.get("type")
+            state = data.get("state")
             is_leaf = data.get("event") == "sample"
 
             # hard mapping
@@ -642,7 +642,7 @@ def main2():
         diff_T=diff_T,
         Qs=Qs,
         time_length=1.0,
-        root_type="A",
+        root_state="A",
         seed=seed
     )
 
@@ -697,12 +697,11 @@ def main():
             columns=["A","B","C"]
         ),
         T=1.0,
-        root_type="A",
+        root_state="A",
         seed=0
     )
 
     save_dir = "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/0"
-
 
     os.makedirs(save_dir, exist_ok=True)
 
