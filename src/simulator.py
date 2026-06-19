@@ -457,6 +457,422 @@ def simulate_multitype_bd_ctmc(
     return G, root
 
 
+import random
+import numpy as np
+import networkx as nx
+
+
+def get_active_transitions(
+    state,
+    t,
+    Q,
+    transition_windows,
+):
+    """
+    Returns a dictionary
+
+        {destination_state: rate}
+
+    containing only transitions that are active at time t.
+
+    transition_windows format:
+
+    {
+        ("A", "B"): [(0.2, 0.4), (0.8, 1.0)],
+        ("A", "C"): [(0.5, 0.6)],
+        ("B", "D"): [(0.3, 0.9)],
+    }
+    """
+
+    transitions = {}
+
+    for dest in Q.columns:
+
+        q = float(Q.loc[state, dest])
+
+        if q <= 0:
+            continue
+
+        active = False
+
+        for start, end in transition_windows.get(
+            (state, dest),
+            []
+        ):
+            if start <= t < end:
+                active = True
+                break
+
+        if active:
+            transitions[dest] = q
+
+    return transitions
+
+
+def next_rate_change(
+    t,
+    transition_windows,
+):
+    """
+    Returns the next transition-window boundary
+    strictly greater than t.
+
+    Returns None if no future boundary exists.
+    """
+
+    boundary = None
+
+    for windows in transition_windows.values():
+
+        for start, end in windows:
+
+            if start > t:
+                boundary = (
+                    start
+                    if boundary is None
+                    else min(boundary, start)
+                )
+
+            if end > t:
+                boundary = (
+                    end
+                    if boundary is None
+                    else min(boundary, end)
+                )
+
+    return boundary
+
+
+def close_branch(
+    G,
+    parent,
+    tip,
+    t,
+):
+    """
+    Close an active branch at time t.
+    """
+
+    G.nodes[tip]["time"] = t
+
+    G.edges[parent, tip]["end_time"] = t
+
+    G.edges[parent, tip]["length"] = (
+        t - G.edges[parent, tip]["start_time"]
+    )
+
+
+def simulate_multitype_bdt_ctmc_window(
+    birth_rates,
+    death_rates,
+    sampling_rates,
+    Q,
+    transition_windows,
+    T,
+    root_state="A",
+    seed=None,
+):
+    """
+    Exact Gillespie simulation of a multitype birth-death process
+    with transition-specific activation windows.
+
+    Parameters
+    ----------
+    birth_rates : dict
+        state -> lambda
+
+    death_rates : dict
+        state -> mu
+
+    sampling_rates : dict
+        state -> rho
+
+    Q : pandas.DataFrame
+        transition-rate matrix
+
+    transition_windows : dict
+
+        {
+            ("A","B"): [(0.2,0.4), (0.8,1.0)],
+            ("A","C"): [(0.5,0.6)],
+            ...
+        }
+
+    T : float
+        final time
+    """
+
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    G = nx.DiGraph()
+
+    next_node = 0
+
+    root = next_node
+    next_node += 1
+
+    G.add_node(
+        root,
+        time=0.0,
+        event="root",
+        state=root_state,
+    )
+
+    first = next_node
+    next_node += 1
+
+    G.add_node(
+        first,
+        time=None,
+        event=None,
+        state=root_state,
+    )
+
+    G.add_edge(
+        root,
+        first,
+        start_time=0.0,
+        end_time=None,
+        length=None,
+    )
+
+    alive = [
+        (root, first, root_state)
+    ]
+
+    t = 0.0
+
+    while alive and t < T:
+
+        #
+        # Build complete event list
+        #
+        events = []
+
+        for lineage_idx, (
+            parent,
+            tip,
+            state,
+        ) in enumerate(alive):
+
+            lam = float(
+                birth_rates[state]
+            )
+
+            mu = float(
+                death_rates[state]
+            )
+
+            if lam > 0:
+                events.append(
+                    (
+                        lineage_idx,
+                        "birth",
+                        lam,
+                    )
+                )
+
+            if mu > 0:
+                events.append(
+                    (
+                        lineage_idx,
+                        "death",
+                        mu,
+                    )
+                )
+
+            transitions = get_active_transitions(
+                state,
+                t,
+                Q,
+                transition_windows,
+            )
+
+            for dest, q in transitions.items():
+
+                events.append(
+                    (
+                        lineage_idx,
+                        ("transition", dest),
+                        q,
+                    )
+                )
+
+        total_rate = sum(
+            rate
+            for _, _, rate in events
+        )
+
+        if total_rate <= 0:
+            break
+
+        #
+        # Draw waiting time
+        #
+        dt = np.random.exponential(
+            1.0 / total_rate
+        )
+
+        boundary = next_rate_change(
+            t,
+            transition_windows,
+        )
+
+        #
+        # If rate structure changes first,
+        # move to boundary and restart.
+        #
+        if (
+            boundary is not None
+            and t + dt >= boundary
+        ):
+            t = boundary
+            continue
+
+        #
+        # Event would happen after T
+        #
+        if t + dt >= T:
+            break
+
+        t += dt
+
+        #
+        # Choose event
+        #
+        r = np.random.uniform(
+            0.0,
+            total_rate,
+        )
+
+        cumulative = 0.0
+
+        chosen_event = None
+
+        for event in events:
+
+            cumulative += event[2]
+
+            if r <= cumulative:
+                chosen_event = event
+                break
+
+        lineage_idx, event_type, _ = chosen_event
+
+        parent, tip, state = alive.pop(
+            lineage_idx
+        )
+
+        close_branch(
+            G,
+            parent,
+            tip,
+            t,
+        )
+
+        #
+        # Birth
+        #
+        if event_type == "birth":
+
+            G.nodes[tip]["event"] = "birth"
+
+            for _ in range(2):
+
+                child = next_node
+                next_node += 1
+
+                G.add_node(
+                    child,
+                    time=None,
+                    event=None,
+                    state=state,
+                )
+
+                G.add_edge(
+                    tip,
+                    child,
+                    start_time=t,
+                    end_time=None,
+                    length=None,
+                )
+
+                alive.append(
+                    (
+                        tip,
+                        child,
+                        state,
+                    )
+                )
+
+        #
+        # Death
+        #
+        elif event_type == "death":
+
+            G.nodes[tip]["event"] = "death"
+
+        #
+        # Transition
+        #
+        else:
+
+            _, dest = event_type
+
+            G.nodes[tip]["event"] = "transition"
+
+            child = next_node
+            next_node += 1
+
+            G.add_node(
+                child,
+                time=None,
+                event=None,
+                state=dest,
+            )
+
+            G.add_edge(
+                tip,
+                child,
+                start_time=t,
+                end_time=None,
+                length=None,
+            )
+
+            alive.append(
+                (
+                    tip,
+                    child,
+                    dest,
+                )
+            )
+
+    #
+    # Truncate surviving lineages at T
+    #
+    for parent, tip, state in alive:
+
+        close_branch(
+            G,
+            parent,
+            tip,
+            T,
+        )
+
+        if (
+            np.random.random()
+            < sampling_rates[state]
+        ):
+            G.nodes[tip]["event"] = "sample"
+        else:
+            G.nodes[tip]["event"] = "unsampled"
+
+    return G, root
+
+
+
 def filter_extant_lineages(G, root):
     """
     Prune tree bottom-up to keep only extant lineages.
@@ -668,7 +1084,7 @@ def main2():
 
 
 
-def main():
+def main3():
     from src.plotters import plot_simulated_lineage_tree
 
     G, root = simulate_multitype_bd_ctmc(
@@ -702,6 +1118,69 @@ def main():
     )
 
     save_dir = "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/0"
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    print(G.nodes(data=True))
+   
+    save_tree(G, root, f"{save_dir}/T.json")
+    G_extant = filter_extant_lineages(G, root)
+    save_tree(G_extant, root, f"{save_dir}/T_extant.json")
+
+    export_tree(G_extant, f"{save_dir}/nodes.csv", f"{save_dir}/edges.csv")
+
+
+    try:
+        plot_simulated_lineage_tree(G, root)
+        plt.savefig(f"{save_dir}/T.png")
+        plt.close()
+
+        plot_simulated_lineage_tree(G_extant, root)
+        plt.savefig(f"{save_dir}/T_extant.png")
+        plt.close()
+    except Exception as e:
+        print(f"Plotting failed: {e}")
+
+
+def main():
+    from src.plotters import plot_simulated_lineage_tree
+
+    G, root = simulate_multitype_bdt_ctmc_window(
+        birth_rates={
+            "A": 7.0,
+            "B": 5.5,
+            "C": 3.5,
+        },
+        death_rates={
+            "A": 0.2,
+            "B": 0.1,
+            "C": 0.1,
+        },
+        sampling_rates={
+            "A": 0.5,
+            "B": 0.5,
+            "C": 0.5,
+        },
+        Q=pd.DataFrame(
+            [
+                [0.0, 4.0, 6.0],
+                [0.0, 0.0, 3.2],
+                [0.0, 0.0, 0.0],
+            ],
+            index=["A","B","C"],
+            columns=["A","B","C"]
+        ),
+        transition_windows = {
+            ("A", "B"): [(0.55, 0.7)],
+            ("A", "C"): [(0.55, 0.7)],
+            ("B", "C"): [(0.7, 0.9)],
+        },
+        T=1.0,
+        root_state="A",
+        seed=0
+    )
+
+    save_dir = "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc_window/0"
 
     os.makedirs(save_dir, exist_ok=True)
 
