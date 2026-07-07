@@ -51,6 +51,9 @@ color_map = {
     "K1": "blue",
     "T1": "green",
     "N1": "orange",
+    0: "green",
+    1: "orange",
+    2: "blue",
 }
 
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
@@ -246,7 +249,8 @@ def plot_differentiation_tree(
     plt.show()
 
 
-def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None, figsize=(8, 5), maxtime=None):
+def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None, figsize=(8, 5), maxtime=None,
+                          diff_times=None):
     # Heights from root
     height = {}
 
@@ -281,12 +285,12 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
         if not children:
             continue
         xs = [x[c] for c in children]
-        ax.plot([min(xs), max(xs)], [y[u], y[u]], color="black")
+        ax.plot([min(xs), max(xs)], [y[u], y[u]], color="black", alpha=0.3)
         for c in children:
             color = "black"
             if red_edges and (u, c) in red_edges:
                 color = "red"
-            ax.plot([x[c], x[c]], [y[u], y[c]], color=color)
+            ax.plot([x[c], x[c]], [y[u], y[c]], color=color, alpha=0.3)
             if add_labels:
                 w = T[u][c]["length"]
                 y_mid = (y[u] + y[c]) / 2
@@ -296,7 +300,7 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
     for n in T.nodes:
         state = T.nodes[n].get("state") or T.nodes[n].get("state")
         color = color_map.get(state, "black")
-        ax.scatter(x[n], y[n], color=color, zorder=3, s=5)
+        ax.scatter(x[n], y[n], color=color, zorder=3, s=5, alpha=0.3)
         node_str = str(n)
         if add_labels and state:
             node_str += "\n(" + state + ")"
@@ -313,6 +317,11 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
                 if children:
                     label = f"{n}→ {{{', '.join(map(str, children))}}}"
                     ax.text(-0.15, -dt + 0.01, label, fontsize=9, zorder=11)
+    
+    if diff_times is not None:
+        for dt in diff_times:
+            ax.axhline(-dt, color="purple", linestyle="dotted", zorder=10)
+            ax.text(-0.15, -dt + 0.01, f"τ={dt:.2f}", fontsize=9, color="purple", zorder=11)
 
     # Optional horizontal lines at birth events
     if draw_birth_event_lines:

@@ -28,9 +28,10 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
             if state is None or state == "?":
                 sid = -1
             else:
-                if state not in STATE_TO_ID:
-                    raise ValueError(f"Unknown state: {state}")
-                sid = STATE_TO_ID[state]
+                # if state not in STATE_TO_ID:
+                #     raise ValueError(f"Unknown state: {state}")
+                # sid = STATE_TO_ID[state]
+                sid = state
 
             writer.writerow([
                 n,
@@ -48,7 +49,7 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
             writer.writerow([
                 u,
                 v,
-                float(data.get("weight", 0.0))
+                float(data.get("length", 0.0))
             ])
 
 
