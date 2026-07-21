@@ -54,6 +54,8 @@ color_map = {
     0: "green",
     1: "orange",
     2: "blue",
+    3: "pink",
+    4: "brown",
 }
 
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
