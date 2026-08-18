@@ -56,6 +56,9 @@ color_map = {
     2: "blue",
     3: "pink",
     4: "brown",
+    "A": "blue",
+    "B": "green",
+    "C": "brown",
 }
 
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
@@ -103,16 +106,19 @@ def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
         t0 = data["start_time"]
         t1 = data["end_time"]
 
+        state = G.nodes[v]["state"]
+        color = color_map.get(state, "black")
+
         x = x_pos[v]
 
         # vertical lineage
-        ax.plot([x, x], [t0, t1], color="black")
+        ax.plot([x, x], [t0, t1], color=color)
 
         # horizontal split at birth
         if G.nodes[v]["event"] == "birth":
             children = list(G.successors(v))
             xs = [x_pos[c] for c in children]
-            ax.plot(xs, [t1, t1], color="black")
+            ax.plot(xs, [t1] * len(xs), color=color)
 
     # ---------
     # Draw node labels

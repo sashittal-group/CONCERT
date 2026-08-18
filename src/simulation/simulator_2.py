@@ -35,10 +35,10 @@ def simulate(param_id, seed):
 
 
     G, root = simulate_multitype_bd_with_diff(
-        lam=lam,
-        mu=mu,
-        diff_T=diff_T,
-        Qs=Qs,
+        birth_rates=lam,
+        death_rates=mu,
+        differentiation_times=diff_T,
+        transition_probabilities=Qs,
         time_length=5,
         root_type="A",
         seed=seed,
