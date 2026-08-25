@@ -2531,11 +2531,11 @@ def main11():
     from src.plotters import plot_simulated_lineage_tree
     from src.likelihood import add_node_times
 
-    ba = 7
+    ba = 8
     bb = 7
     abp = 0.8
     transition_time = 0.4
-    sampling_rate = 0.5
+    sampling_rates = [0.5, 0.6]
 
     diff_T = nx.DiGraph()
     diff_T.add_node("A", transition_times = [transition_time])
@@ -2570,8 +2570,8 @@ def main11():
                     "B": 0,
                 },
                 sampling_rates={
-                    "A": sampling_rate,
-                    "B": sampling_rate,
+                    "A": sampling_rates[0],
+                    "B": sampling_rates[1],
                 },
                 transition_probabilities=diff_probs,
                 differentiation_times=diff_T,
@@ -2580,7 +2580,7 @@ def main11():
                 seed=multi * 25 + seed
             )
 
-            save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
+            save_dir = f"/home/samin/workspace/research/phylodynamic-CARTA/data/simulation/bdt_ctmc/{setting}"
 
             os.makedirs(save_dir, exist_ok=True)
 
