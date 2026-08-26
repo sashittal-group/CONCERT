@@ -2531,24 +2531,29 @@ def main11():
     from src.plotters import plot_simulated_lineage_tree
     from src.likelihood import add_node_times
 
-    ba = 8
-    bb = 7
-    abp = 0.8
+    ba = 9
+    bb = 8
+    bc = 7
+    abp = 0.35
+    abc = 0.45
     transition_time = 0.4
-    sampling_rates = [0.5, 0.6]
+    sampling_rates = [0.5, 0.4, 0.6]
 
     diff_T = nx.DiGraph()
     diff_T.add_node("A", transition_times = [transition_time])
     diff_T.add_node("B", transition_times = [])
+    diff_T.add_node("C", transition_times = [])
     diff_T.add_edge("A", "B")
+    diff_T.add_edge("A", "C")
 
     diff_probs = pd.DataFrame(
         [
-            [1 - abp, abp],
-            [0.0, 0.0],
+            [1 - abp - abc, abp, abc],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
         ],
-        index=["A", "B"],
-        columns=["A", "B"]
+        index=["A", "B", "C"],
+        columns=["A", "B", "C"]
     )
 
     for multi in range(5):
@@ -2564,14 +2569,17 @@ def main11():
                 birth_rates={
                     "A": ba,
                     "B": bb,
+                    "C": bc,
                 },
                 death_rates={
-                    "A": 0,
-                    "B": 0,
+                    "A": 0.2,
+                    "B": 0.7,
+                    "C": 0.5,
                 },
                 sampling_rates={
                     "A": sampling_rates[0],
                     "B": sampling_rates[1],
+                    "C": sampling_rates[2],
                 },
                 transition_probabilities=diff_probs,
                 differentiation_times=diff_T,
