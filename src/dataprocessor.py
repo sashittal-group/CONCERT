@@ -114,3 +114,91 @@ def export_diff_T(
             writer.writerow(row)
 
     return new_map  # useful for debugging / reuse
+
+
+# ============================================================
+from pathlib import Path
+
+import pandas as pd
+import torch
+
+from src.dtos import (
+    Node,
+    Edge,
+    DiffTree,
+)
+
+
+# ============================================================
+# LOAD NODES
+# ============================================================
+
+def load_nodes(file: str) -> list[Node]:
+
+    print("LOADING NODES ...")
+
+    file = Path(file)
+
+    if not file.exists():
+        raise RuntimeError(f"Failed to open file: {file}")
+
+    df = pd.read_csv(file)
+
+    required = ["node_id", "T", "is_leaf", "state_id"]
+
+    for col in required:
+        if col not in df.columns:
+            raise RuntimeError(
+                f"Missing column '{col}' in {file}"
+            )
+
+    nodes = [
+        Node(
+            id=int(row.node_id),
+            T=float(row.T),
+            is_leaf=bool(row.is_leaf),
+            state=int(row.state_id),
+        )
+        for row in df.itertuples(index=False)
+    ]
+
+    print(f"LOADED {len(nodes)} NODES")
+
+    return nodes
+
+
+# ============================================================
+# LOAD EDGES
+# ============================================================
+
+def load_edges(file: str) -> list[Edge]:
+
+    print("LOADING EDGES ...")
+
+    file = Path(file)
+
+    if not file.exists():
+        raise RuntimeError(f"Failed to open file: {file}")
+
+    df = pd.read_csv(file)
+
+    required = ["parent", "child", "branch_length"]
+
+    for col in required:
+        if col not in df.columns:
+            raise RuntimeError(
+                f"Missing column '{col}' in {file}"
+            )
+
+    edges = [
+        Edge(
+            u=int(row.parent),
+            v=int(row.child),
+            length=float(row.branch_length),
+        )
+        for row in df.itertuples(index=False)
+    ]
+
+    print(f"LOADED {len(edges)} EDGES")
+
+    return edges

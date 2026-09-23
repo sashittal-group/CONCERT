@@ -2632,11 +2632,11 @@ def main12():
     from src.plotters import plot_simulated_lineage_tree
     from src.likelihood import add_node_times
 
-    ba = 7
-    bb = 7
-    abp = 0.2
-    transition_times = [0.2, 0.4, 0.6, 0.8]
-    sampling_rate = 0.5
+    abp = 0.5
+    transition_times = [0.5]
+    birth_rates = [8, 7]
+    death_rates = [0.2, 0.5]
+    sampling_rates = [0.5, 0.6]
 
     diff_T = nx.DiGraph()
     diff_T.add_node("A", transition_times = transition_times)
@@ -2652,7 +2652,7 @@ def main12():
         columns=["A", "B"]
     )
 
-    num_trees_per_setting = 100
+    num_trees_per_setting = 1000
 
     for multi in range(5):
 
@@ -2660,69 +2660,85 @@ def main12():
 
             setting = f"test{multi+6}_multi"
 
-            print(setting)
+            inc = 0
+
+            while True:
+                print(setting, seed, inc)
+
+
+                try:
+
+                    G, root = simulate_multitype_bd_with_diff(
+                        birth_rates={
+                            "A": birth_rates[0],
+                            "B": birth_rates[1],
+                        },
+                        death_rates={
+                            "A": death_rates[0],
+                            "B": death_rates[1],
+                        },
+                        sampling_rates={
+                            "A": sampling_rates[0],
+                            "B": sampling_rates[1],
+                        },
+                        transition_probabilities=diff_probs,
+                        differentiation_times=diff_T,
+                        time_length=1.0,
+                        root_state="A",
+                        seed=(multi * num_trees_per_setting + seed) * 10 + inc
+                    )
+        
+                    save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/coord_diff/{setting}"
+        
+                    os.makedirs(save_dir, exist_ok=True)
+        
+                    # print(G.nodes(data=True))
+        
+                    G = add_node_times(G)
+        
+                    print(len(G.nodes))
+        
+                    # save_tree(G, root, f"{save_dir}/T_{seed}.json")
+                    G_extant = filter_extant_lineages(G, root)
+                    G_extant, transitions = contract_edges(G_extant, root)
+        
+                    # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
+        
+                    export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
+        
+        
+                    # try:
+                    plot_simulated_lineage_tree(G, root, show_labels=False)
+                    plt.savefig(f"{save_dir}/T_{seed}.png")
+                    plt.close()
+        
+                    plot_simulated_lineage_tree(G_extant, root, show_labels=False)
+                    plt.savefig(f"{save_dir}/T_extant_{seed}.png")
+                    plt.close()
+                    # except Exception as e:
+                    #     print(f"Plotting failed: {e}")
+        
+                    with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
+                        print(len(transitions), file=f, flush=True)
+                        for a, _, _, _, _ in sorted(transitions):
+                            print(a, file=f, flush=True)
+        
+                    with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
+                        print(len(transitions), file=f, flush=True)
+                        for t, e1, e2, s1, s2 in sorted(transitions):
+                            print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
+        
+                    break
+
+                except Exception as e:
+
+                    inc += 1
+
+        
+
+
 
             
-            G, root = simulate_multitype_bd_with_diff(
-                birth_rates={
-                    "A": ba,
-                    "B": bb,
-                },
-                death_rates={
-                    "A": 0,
-                    "B": 0,
-                },
-                sampling_rates={
-                    "A": sampling_rate,
-                    "B": sampling_rate,
-                },
-                transition_probabilities=diff_probs,
-                differentiation_times=diff_T,
-                time_length=1.0,
-                root_state="A",
-                seed=multi * num_trees_per_setting + seed
-            )
-
-            save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/coord_diff/{setting}"
-
-            os.makedirs(save_dir, exist_ok=True)
-
-            # print(G.nodes(data=True))
-
-            G = add_node_times(G)
-
-            print(len(G.nodes))
-
-            # save_tree(G, root, f"{save_dir}/T_{seed}.json")
-            G_extant = filter_extant_lineages(G, root)
-            G_extant, transitions = contract_edges(G_extant, root)
-
-            # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
-
-            export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-
-
-            # try:
-            plot_simulated_lineage_tree(G, root, show_labels=False)
-            plt.savefig(f"{save_dir}/T_{seed}.png")
-            plt.close()
-
-            plot_simulated_lineage_tree(G_extant, root, show_labels=False)
-            plt.savefig(f"{save_dir}/T_extant_{seed}.png")
-            plt.close()
-            # except Exception as e:
-            #     print(f"Plotting failed: {e}")
-
-            with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
-                print(len(transitions), file=f, flush=True)
-                for a, _, _, _, _ in sorted(transitions):
-                    print(a, file=f, flush=True)
-
-            with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
-                print(len(transitions), file=f, flush=True)
-                for t, e1, e2, s1, s2 in sorted(transitions):
-                    print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-
 
 
 
