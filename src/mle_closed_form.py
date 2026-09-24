@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Callable, Optional
 
 import torch
@@ -11,7 +12,6 @@ import torch.nn as nn
 
 from src.dtos import (
     PreparedTree,
-    TransitionEpoch,
     LikelihoodResult,
     UResult,
     OptimizationResult,
@@ -47,6 +47,19 @@ def get_device() -> torch.device:
         return torch.device("mps")
 
     return torch.device("cpu")
+
+
+def _sync_device(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+
+def _timed_log(label: str, start: float, device: torch.device) -> None:
+    _sync_device(device)
+    elapsed = time.perf_counter() - start
+    print(f"[timing] {label}: {elapsed:.3f}s", flush=True)
 
 
 # ============================================================
@@ -99,34 +112,16 @@ def move_tree_to_device(
 
     return PreparedTree(
         root=tree.root,
-        original_id=tree.original_id.to(device),
-        time=tree.time.to(device),
-        state=tree.state.to(device),
-        parent=tree.parent.to(device),
-        edge_idx_to_parent=tree.edge_idx_to_parent.to(device),
-        edge_parent=tree.edge_parent.to(device),
-        edge_child=tree.edge_child.to(device),
-        postorder=tree.postorder.to(device),
-    )
-
-
-def move_epoch_to_device(
-    epoch: TransitionEpoch,
-    device: torch.device,
-) -> TransitionEpoch:
-    """
-    Move a TransitionEpoch to the requested device.
-
-    The time may be either a Python float or a torch.Tensor.
-    """
-
-    return TransitionEpoch(
-        time=as_tensor(
-            epoch.time,
-            device=device,
-            dtype=torch.float64,
-        ),
-        transition_edges=epoch.transition_edges.to(device),
+        original_id=tree.original_id,
+        time=tree.time,
+        state=tree.state,
+        parent=tree.parent,
+        children=tree.children,
+        edge_idx_to_parent=tree.edge_idx_to_parent,
+        edge_parent=tree.edge_parent,
+        edge_child=tree.edge_child,
+        postorder=tree.postorder,
+        time_t=tree.time_t.to(device),
     )
 
 
@@ -459,6 +454,7 @@ class PhylodynamicParameters(nn.Module):
 def calculate_total_log_likelihood(
     params: PhylodynamicParameters,
     trees: list[PreparedTree],
+    static_transition_times: list[float] | None = None,
 ) -> torch.Tensor:
     """
     Calculate the total log likelihood across all trees.
@@ -471,6 +467,9 @@ def calculate_total_log_likelihood(
     sampling_probabilities = params.sampling_probabilities
     transition_probabilities = params.transition_probabilities
     transition_times = params.transition_times
+
+    if static_transition_times is None:
+        static_transition_times = transition_times.detach().cpu().tolist()
 
 
     # --------------------------------------------------------
@@ -506,7 +505,7 @@ def calculate_total_log_likelihood(
             transition_probabilities,
             sampling_probabilities,
             U_result.Cs,
-            transition_times,
+            static_transition_times,
         )
 
         LL = LL + result.root_loglikelihood
@@ -594,6 +593,29 @@ def log_iteration(
 # MAIN OPTIMIZATION FUNCTION
 # ============================================================
 
+class LikelihoodModel(nn.Module):
+
+    def __init__(
+        self,
+        params,
+        trees,
+    ):
+        super().__init__()
+
+        self.params = params
+        self.trees = trees
+        self.static_transition_times = (
+            params.transition_times.detach().cpu().tolist()
+        )
+
+    def forward(self):
+
+        return calculate_total_log_likelihood(
+            params=self.params,
+            trees=self.trees,
+            static_transition_times=self.static_transition_times,
+        )
+
 
 def optimize_parameters(
     trees: list[PreparedTree],
@@ -647,6 +669,8 @@ def optimize_parameters(
         "lbfgs"
     """
 
+    total_start = time.perf_counter()
+
     # ========================================================
     # DEVICE
     # ========================================================
@@ -658,18 +682,11 @@ def optimize_parameters(
         device = torch.device(device)
 
     print(f"Using device: {device}")
+    print("[timing] optimization setup started", flush=True)
 
     # ========================================================
     # MOVE TREES
     # ========================================================
-
-    trees = [
-        move_tree_to_device(
-            tree,
-            device,
-        )
-        for tree in trees
-    ]
 
     # given_transition_epochs = [
     #     move_epoch_to_device(
@@ -693,6 +710,7 @@ def optimize_parameters(
         initial_transition_probabilities=(initial_transition_probabilities),
         given_transition_times=(given_transition_times),
     ).to(device)
+    _timed_log("parameter construction", total_start, device)
 
     # ========================================================
     # LOG FILE
@@ -775,18 +793,33 @@ def optimize_parameters(
     # ADAM
     # ========================================================
 
+    model = LikelihoodModel(
+        params=params,
+        trees=trees,
+    )
+
+    compile_start = time.perf_counter()
+    model = torch.compile(
+        model, fullgraph=True
+    )
+    _timed_log("torch.compile request returned", compile_start, device)
+
     if optimizer_name == "adam":
 
         for step in range(1, max_steps + 1):
 
+            step_start = time.perf_counter()
+
             optimizer.zero_grad(set_to_none=True)
 
-            LL = calculate_total_log_likelihood(
-                params=params,
-                trees=trees,
-            )
-
-            loss = -LL
+            forward_start = time.perf_counter()
+            loss = -model()
+            if step == 1:
+                _timed_log(
+                    "step 1 forward (includes graph construction)",
+                    forward_start,
+                    device,
+                )
 
             # Detect numerical failures early.
             if not torch.isfinite(loss):
@@ -795,29 +828,37 @@ def optimize_parameters(
                     f"Non-finite loss at step {step}: " f"{loss.detach().item()}"
                 )
 
-            loss.backward()
+            # The forward value is already the current likelihood. Avoid
+            # evaluating the complete tree likelihood a second time here.
+            current_LL = -loss.detach()
 
+            state_before_step = {
+                name: value.detach().clone()
+                for name, value in params.state_dict().items()
+            }
+
+            backward_start = time.perf_counter()
+            loss.backward()
+            if step == 1:
+                _timed_log("step 1 backward", backward_start, device)
+
+            optimizer_start = time.perf_counter()
             optimizer.step()
+            if step == 1:
+                _timed_log("step 1 optimizer.step", optimizer_start, device)
+                _timed_log("step 1 total", step_start, device)
 
             # ------------------------------------------------
             # Best solution
             # ------------------------------------------------
 
-            with torch.no_grad():
+            if current_LL > best_LL:
 
-                current_LL = calculate_total_log_likelihood(
-                    params=params,
-                    trees=trees,
-                )
+                best_LL = current_LL
 
-                if current_LL > best_LL:
-
-                    best_LL = current_LL.detach()
-
-                    best_state = {
-                        name: value.detach().clone()
-                        for name, value in params.state_dict().items()
-                    }
+                # Save the parameters that produced current_LL, which was
+                # computed immediately before the optimizer update.
+                best_state = state_before_step
 
             # ------------------------------------------------
             # Logging
@@ -904,7 +945,7 @@ def optimize_parameters(
         final_LL = calculate_total_log_likelihood(
             params=params,
             trees=trees,
-            given_transition_times=(given_transition_times),
+            static_transition_times=(given_transition_times),
         )
 
     # ========================================================

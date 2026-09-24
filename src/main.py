@@ -6,21 +6,27 @@ import argparse
 import time
 from pathlib import Path
 
+
+import os
+
+# os.environ["TORCHDYNAMO_VERBOSE"] = "1"
+# os.environ["TORCH_LOGS"] = "+dynamo"
+
 import torch
 
 from src.dataprocessor import load_nodes, load_edges
 from src.tree_utils import prepare_tree
 
-from src.dtos import TransitionEpoch
 from src.mle_closed_form import (
     optimize_parameters,
 )
-from src.closed_form_coord import (
-    calculate_linear_prior_for_transition_times,
-)
+# from src.closed_form_coord import (
+#     calculate_linear_prior_for_transition_times,
+# )
 
 
-torch.autograd.set_detect_anomaly(True)
+# Enable this only while diagnosing NaNs or invalid backward operations.
+torch.autograd.set_detect_anomaly(False)
 
 # ============================================================
 # HELPERS
@@ -110,7 +116,7 @@ def parse_args():
     parser.add_argument(
         "--max-steps",
         type=int,
-        default=5000,
+        default=50000,
     )
 
     parser.add_argument(
@@ -330,6 +336,8 @@ def main():
 
         for i in range(num_trees):
 
+            tree_start = time.perf_counter()
+
             node_path = directory / f"nodes_{i}.csv"
 
             edge_path = directory / f"edges_{i}.csv"
@@ -350,6 +358,13 @@ def main():
             )
 
             trees.append(tree)
+
+            print(
+                f"[timing] tree {i} preparation: "
+                f"{time.perf_counter() - tree_start:.3f}s "
+                f"({len(loaded_nodes)} nodes, {len(loaded_edges)} edges)",
+                flush=True,
+            )
 
         print(f"LOADED {len(trees)} TREES")
 
@@ -393,15 +408,15 @@ def main():
 
             factor = 0.0
 
-        def prior_fn(epochs):
+        # def prior_fn(epochs):
 
-            return calculate_linear_prior_for_transition_times(
-                epochs,
-                factor,
-            )
+        #     return calculate_linear_prior_for_transition_times(
+        #         epochs,
+        #         factor,
+        #     )
 
         # Do not use a prior function when --prior is false.
-        actual_prior_fn = prior_fn if args.prior else None
+        # actual_prior_fn = prior_fn if args.prior else None
 
         # ====================================================
         # INITIAL PARAMETERS

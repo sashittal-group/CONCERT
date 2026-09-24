@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import torch
 
 
@@ -30,35 +31,57 @@ class Edge:
 @dataclass
 class PreparedTree:
     """
-    GPU/autograd-friendly tree representation.
+    Static tree representation.
 
-    N = number of nodes
-    E = number of edges
+    Static tree data are stored as Python lists so they can be
+    embedded in a compiled graph without NumPy indexing.
+    `time_t` is the Torch version of `time` used by the
+    differentiable likelihood.
     """
+
+    # ========================================================
+    # ROOT
+    # ========================================================
 
     root: int
 
-    # Node attributes (shape N)
-    original_id: torch.Tensor          # int64
-    time: torch.Tensor                 # float64
-    state: torch.Tensor                # int64
-    parent: torch.Tensor               # int64
-    edge_idx_to_parent: torch.Tensor   # int64
+    # ========================================================
+    # NODE ATTRIBUTES
+    # ========================================================
 
-    # Edge attributes (shape E)
-    edge_parent: torch.Tensor          # int64
-    edge_child: torch.Tensor           # int64
+    original_id: list[int]
+    time: list[float]
+    state: list[int]
+    parent: list[int]
+    children: list[list[int]]
+    edge_idx_to_parent: list[int]
 
-    # Traversal order (shape N)
-    postorder: torch.Tensor            # int64
+    # ========================================================
+    # EDGE ATTRIBUTES
+    # ========================================================
+
+    edge_parent: list[int]
+    edge_child: list[int]
+
+    # ========================================================
+    # POSTORDER
+    # ========================================================
+
+    postorder: list[int]
+
+    # ========================================================
+    # TORCH TIME
+    # ========================================================
+
+    time_t: torch.Tensor
 
     @property
     def num_nodes(self):
-        return self.time.shape[0]
+        return len(self.time)
 
     @property
     def num_edges(self):
-        return self.edge_parent.shape[0]
+        return len(self.edge_parent)
 
 
 # ============================================================
@@ -75,82 +98,6 @@ class LikelihoodResult:
     root_loglikelihood: torch.Tensor
     LL: torch.Tensor
 
-
-# ============================================================
-# DIFFERENTIATION TREE
-# ============================================================
-
-@dataclass
-class DiffTree:
-    """
-    Replacement for Diff_T_Node pointer tree.
-
-    parent[root] = -1
-    """
-
-    state: torch.Tensor       # int64
-    diff_time: torch.Tensor   # float64
-    parent: torch.Tensor      # int64
-
-    @property
-    def num_nodes(self):
-        return self.state.shape[0]
-
-
-# ============================================================
-# COMPUTE GRAPH STRUCTURES
-# ============================================================
-
-@dataclass
-class ComputeEdge:
-    id: int
-
-    u: int
-    v: int
-
-    u_T: float
-    v_T: float
-
-    v_state: int
-
-
-@dataclass
-class ComputeNode:
-    id: int
-    T: float
-    is_leaf: bool
-    state: int
-
-
-# ============================================================
-# TRANSITION EPOCHS
-# ============================================================
-
-@dataclass
-class TransitionEpoch:
-    """
-    transition_edges shape:
-        (k, 2)
-
-    each row:
-        [parent_state, child_state]
-    """
-
-    time: float
-    transition_edges: list[tuple[int, int]]
-
-
-@dataclass
-class TransitionEpochWithEdge:
-    """
-    edge shape:
-        (2,)
-        [u, v]
-    """
-
-    time: float
-    transition_edges: torch.Tensor
-    edge: torch.Tensor
 
 
 # ============================================================
@@ -211,4 +158,4 @@ def get_device():
 
 DEVICE = get_device()
 
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)

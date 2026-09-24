@@ -8,7 +8,6 @@ import torch
 
 from src.dtos import (
     PreparedTree,
-    TransitionEpoch,
     LikelihoodResult,
     UResult,
 )
@@ -24,93 +23,6 @@ NEG_INF = -torch.inf
 # ============================================================
 # HELPERS
 # ============================================================
-
-
-def _epoch_time(
-    epoch: TransitionEpoch,
-    device: torch.device,
-    dtype: torch.dtype,
-) -> torch.Tensor:
-    """
-    Return epoch.time as a scalar torch tensor.
-
-    If epoch.time is already a tensor depending on trainable
-    parameters, the autograd graph is preserved.
-    """
-
-    if isinstance(epoch.time, torch.Tensor):
-        return epoch.time.to(
-            device=device,
-            dtype=dtype,
-        )
-
-    return torch.tensor(
-        epoch.time,
-        device=device,
-        dtype=dtype,
-    )
-
-
-def _get_tree_topology(tree: PreparedTree):
-    """
-    Build and cache the static tree topology.
-
-    This replaces the C++ vector<vector<int>> children
-    structure without requiring Python object pointers.
-
-    The topology is independent of the model parameters, so
-    it is computed only once per PreparedTree.
-
-    Cached fields:
-
-        children[node]      -> list of child node IDs
-        parent[node]        -> parent node ID
-        edge_idx[node]      -> edge index from parent to node
-        state[node]         -> observed state
-
-    All of these are Python/integer structures because they are
-    static and do not participate in autograd.
-    """
-
-    cache = getattr(
-        tree,
-        "_topology_cache",
-        None,
-    )
-
-    if cache is not None:
-        return cache
-
-    # Move only the static topology to CPU once.
-    parent = tree.parent.detach().cpu().tolist()
-
-    edge_idx_to_parent = tree.edge_idx_to_parent.detach().cpu().tolist()
-
-    states = tree.state.detach().cpu().tolist()
-
-    edge_parent = tree.edge_parent.detach().cpu().tolist()
-
-    edge_child = tree.edge_child.detach().cpu().tolist()
-
-    children = [[] for _ in range(tree.num_nodes)]
-
-    for u, v in zip(
-        edge_parent,
-        edge_child,
-    ):
-        children[u].append(v)
-
-    cache = {
-        "children": children,
-        "parent": parent,
-        "edge_idx_to_parent": edge_idx_to_parent,
-        "state": states,
-    }
-
-    # Cache directly on the PreparedTree.
-    tree._topology_cache = cache
-
-    return cache
 
 
 # ============================================================
@@ -135,7 +47,6 @@ def calculate_Us(
     if sampling_probabilities.shape != birth_rates.shape:
         raise ValueError("sampling_probabilities must have shape " "(num_states,)")
 
-    num_states = birth_rates.shape[0]
     num_steps = len(transition_times)
 
     if num_steps == 0:
@@ -273,20 +184,16 @@ def calculate_log_likelihood_closed(
     transition_probabilities: torch.Tensor,
     sampling_probabilities: torch.Tensor,
     Cs: torch.Tensor,
-    transition_times: torch.Tensor,
+    transition_times,
 ) -> LikelihoodResult:
     """
     PyTorch version of calculate_log_likelihood_closed().
 
-    The computation follows the C++ implementation:
+    Tree topology is stored as NumPy arrays in PreparedTree.
+    Only numerical quantities needed for differentiation are
+    represented as PyTorch tensors.
 
-        1. Allocate LL[edge, state].
-        2. Traverse the tree bottom-up.
-        3. Construct boundary condition for each node.
-        4. Propagate continuously through each relevant epoch.
-        5. Apply state-transition probabilities at epochs.
-        6. Continue from the final relevant epoch to the parent.
-        7. Return LL at the dummy root edge, state 0.
+    transition_times are fixed during optimization.
     """
 
     num_states = birth_rates.shape[0]
@@ -319,44 +226,40 @@ def calculate_log_likelihood_closed(
     dtype = birth_rates.dtype
 
     # ========================================================
-    # STATIC TREE TOPOLOGY
+    # STATIC TREE DATA
+    #
+    # Keep topology as Python integers/lists. This prevents
+    # torch.compile from trying to lower NumPy indexing into
+    # tensor operations while keeping it out of autograd.
     # ========================================================
 
-    topology = _get_tree_topology(tree)
+    parent = tree.parent
+    edge_idx_to_parent = tree.edge_idx_to_parent
+    states = tree.state
+    children = tree.children
 
-    children = topology["children"]
-    parent = topology["parent"]
-    edge_idx_to_parent = topology["edge_idx_to_parent"]
-    states = topology["state"]
-
-    # ========================================================
     # LL TABLE
     #
-    # LL[e,s] = likelihood of edge e conditional on
-    # parent being state s.
+    # Use a Python list instead of writing into a tensor
+    # in-place. Each entry is a differentiable tensor.
     # ========================================================
 
     num_edges = tree.num_edges
 
-    LL = torch.full(
-        (num_edges, num_states),
-        NEG_INF,
-        device=device,
-        dtype=dtype,
-    )
+    LL_values = [None for _ in range(num_edges)]
 
     # ========================================================
     # PROCESS EDGES BOTTOM-UP
     # ========================================================
 
-    for node_id_tensor in tree.postorder:
+    for node_id in tree.postorder:
 
-        # postorder is an int64 tensor. Convert only the
-        # structural index to Python int.
-        node_id = int(node_id_tensor.detach().item())
+        node_id = int(node_id)
 
-        # Root has no parent and is not represented by an
-        # incoming likelihood edge.
+        # ----------------------------------------------------
+        # Root has no incoming edge.
+        # ----------------------------------------------------
+
         if parent[node_id] == -1:
             continue
 
@@ -364,25 +267,25 @@ def calculate_log_likelihood_closed(
         # Current edge
         # ----------------------------------------------------
 
-        edge_idx = edge_idx_to_parent[node_id]
+        edge_idx = int(edge_idx_to_parent[node_id])
 
-        u = parent[node_id]
+        u = int(parent[node_id])
+
         v = node_id
 
-        # Node times remain tensors on the selected device.
+        # ----------------------------------------------------
+        # Node times
+        #
+        # time_t is the only Torch representation of node
+        # times.
+        # ----------------------------------------------------
+
         parent_time = tree.time[u]
         child_time = tree.time[v]
 
         # ====================================================
         # BOUNDARY CONDITION
         # ====================================================
-
-        boundary_condition = torch.full(
-            (num_states,),
-            NEG_INF,
-            device=device,
-            dtype=dtype,
-        )
 
         v_children = children[v]
 
@@ -392,14 +295,40 @@ def calculate_log_likelihood_closed(
 
         if len(v_children) == 0:
 
-            child_state = states[v]
+            child_state = int(states[v])
 
             if child_state < 0:
-                raise ValueError(f"Leaf node {v} has unknown state.")
+                raise RuntimeError(f"Leaf node {v} has unknown state.")
 
-            boundary_condition[child_state] = torch.log(
-                sampling_probabilities[child_state]
-            )
+            # Do not construct a tensor and assign into it.
+            #
+            # All states except child_state are impossible.
+            #
+            # This creates:
+            #
+            #   [ -inf, ..., log(rho_s), ..., -inf ]
+            #
+
+            values = []
+
+            for s in range(num_states):
+
+                if s == child_state:
+
+                    values.append(torch.log(sampling_probabilities[s]))
+
+                else:
+
+                    values.append(
+                        torch.full(
+                            (),
+                            NEG_INF,
+                            dtype=dtype,
+                            device=device,
+                        )
+                    )
+
+            boundary_condition = torch.stack(values)
 
         # ----------------------------------------------------
         # Internal binary node
@@ -407,19 +336,34 @@ def calculate_log_likelihood_closed(
 
         elif len(v_children) == 2:
 
-            left_child = v_children[0]
-            right_child = v_children[1]
+            left_child = int(v_children[0])
 
-            left_edge_idx = edge_idx_to_parent[left_child]
+            right_child = int(v_children[1])
 
-            right_edge_idx = edge_idx_to_parent[right_child]
+            left_edge_idx = int(edge_idx_to_parent[left_child])
 
-            boundary_condition = (
-                torch.log(birth_rates) + LL[left_edge_idx] + LL[right_edge_idx]
-            )
+            right_edge_idx = int(edge_idx_to_parent[right_child])
+
+            left_LL = LL_values[left_edge_idx]
+
+            right_LL = LL_values[right_edge_idx]
+
+            if left_LL is None:
+                raise RuntimeError(
+                    f"Likelihood for left child edge "
+                    f"{left_edge_idx} is unavailable."
+                )
+
+            if right_LL is None:
+                raise RuntimeError(
+                    f"Likelihood for right child edge "
+                    f"{right_edge_idx} is unavailable."
+                )
+
+            boundary_condition = torch.log(birth_rates) + left_LL + right_LL
 
         # ----------------------------------------------------
-        # Anything other than 0 or 2 children is invalid.
+        # Anything other than binary
         # ----------------------------------------------------
 
         else:
@@ -437,30 +381,24 @@ def calculate_log_likelihood_closed(
 
         previous_time = child_time
 
-        # Closest transition epoch before parent_time.
-        #
-        # The value is a discrete index used only for deciding
-        # which continuous formula applies. The actual times
-        # used in the likelihood remain tensors.
         closest_n = 0
+
+        # ----------------------------------------------------
+        # Transition epochs
+        #
+        # transition_times are fixed, so these comparisons
+        # determine the fixed piece of the likelihood.
+        # ----------------------------------------------------
 
         for n in range(1, num_steps):
 
             time = transition_times[n]
+
             prev_transition_time = transition_times[n - 1]
 
-            # ------------------------------------------------
-            # Determine whether this transition lies between
-            # child and parent.
-            #
-            # This is discrete control flow. Gradients through
-            # the actual time values inside the selected branch
-            # are still preserved.
-            # ------------------------------------------------
+            parent_after = parent_time > time
 
-            parent_after = bool((parent_time > time).detach().item())
-
-            child_before = bool((time > child_time).detach().item())
+            child_before = time > child_time
 
             if parent_after:
                 closest_n = n
@@ -468,8 +406,7 @@ def calculate_log_likelihood_closed(
             if parent_after and child_before:
 
                 # --------------------------------------------
-                # Continuous propagation from previous_time
-                # to time
+                # Continuous propagation
                 # --------------------------------------------
 
                 r = birth_rates - death_rates
@@ -489,75 +426,43 @@ def calculate_log_likelihood_closed(
                 previous_LL = previous_LL + flow
 
                 # --------------------------------------------
-                # Apply state transition
+                # State transition
                 #
-                # current_LL[s] =
-                #
-                # log sum_j(
-                #     exp(previous_LL[j])
-                #     * Q[s,j]
-                # )
-                #
-                # = logsumexp(
-                #       previous_LL[j] + log Q[s,j]
-                #
-                # This replaces the C++ temporary 'terms'
-                # vector and is directly GPU-compatible.
-                # --------------------------------------------
-
-                # --------------------------------------------
-                # Apply state transition
+                # No log(0):
+                # only transitions with positive probability
+                # are included.
                 # --------------------------------------------
 
                 current_LL_values = []
 
                 for s in range(num_states):
 
-                    # --------------------------------------------------------
-                    # Find the transitions that actually exist in this row.
-                    # --------------------------------------------------------
+                    probabilities = transition_probabilities[s]
 
-                    nonzero = transition_probabilities[s] > 0
+                    # Zero transition probabilities are valid, but log(0)
+                    # creates undefined gradients during optimization.
+                    log_probabilities = torch.log(
+                        probabilities.clamp_min(torch.finfo(dtype).tiny)
+                    )
 
-                    # --------------------------------------------------------
-                    # Only self-transition exists.
-                    #
-                    # Therefore P[s,s] = 1 exactly.
-                    # --------------------------------------------------------
+                    likelihood_terms = previous_LL + log_probabilities
 
-                    if nonzero.sum() == 1:
-
-                        current_LL_values.append(previous_LL[s])
-
-                    else:
-
-                        # ----------------------------------------------------
-                        # Extract only positive transition probabilities.
-                        #
-                        # Therefore torch.log() never sees zero.
-                        # ----------------------------------------------------
-
-                        probabilities = transition_probabilities[s][nonzero]
-
-                        log_probabilities = torch.log(probabilities)
-
-                        likelihood_terms = previous_LL[nonzero] + log_probabilities
-
-                        current_LL_values.append(
-                            torch.logsumexp(
-                                likelihood_terms,
-                                dim=0,
-                            )
+                    current_LL_values.append(
+                        torch.logsumexp(
+                            likelihood_terms,
+                            dim=0,
                         )
+                    )
 
                 previous_LL = torch.stack(current_LL_values)
+
                 previous_time = time
 
         # ====================================================
         # FINAL CONTINUOUS PROPAGATION
         # ====================================================
 
-        final_after_previous = bool((parent_time > previous_time).detach().item())
+        final_after_previous = parent_time > previous_time
 
         if final_after_previous:
 
@@ -584,8 +489,24 @@ def calculate_log_likelihood_closed(
         # ====================================================
         # STORE EDGE LIKELIHOOD
         # ====================================================
+        #
+        # Python list assignment is not an in-place operation
+        # on a differentiable Tensor.
+        # ====================================================
 
-        LL[edge_idx] = previous_LL
+        LL_values[edge_idx] = previous_LL
+
+    # ========================================================
+    # STACK LL TABLE
+    # ========================================================
+
+    if any(value is None for value in LL_values):
+        raise RuntimeError("Not all edge likelihoods were computed.")
+
+    LL = torch.stack(
+        LL_values,
+        dim=0,
+    )
 
     # ========================================================
     # ROOT LIKELIHOOD
@@ -596,12 +517,11 @@ def calculate_log_likelihood_closed(
     root_children = children[root]
 
     if len(root_children) != 1:
-
         raise RuntimeError("Expected dummy root with one child.")
 
-    child = root_children[0]
+    child = int(root_children[0])
 
-    root_edge = edge_idx_to_parent[child]
+    root_edge = int(edge_idx_to_parent[child])
 
     root_loglikelihood = LL[root_edge, 0]
 
@@ -616,58 +536,58 @@ def calculate_log_likelihood_closed(
 # ============================================================
 
 
-def calculate_linear_prior_for_transition_times(
-    transition_epochs: Sequence[TransitionEpoch],
-    factor,
-) -> torch.Tensor:
-    """
-    Calculate:
+# def calculate_linear_prior_for_transition_times(
+#     transition_epochs: Sequence[TransitionEpoch],
+#     factor,
+# ) -> torch.Tensor:
+#     """
+#     Calculate:
 
-        prior = factor * sum_k tau_k
+#         prior = factor * sum_k tau_k
 
-    The transition times can be torch tensors, so the result
-    remains differentiable with respect to trainable times.
-    """
+#     The transition times can be torch tensors, so the result
+#     remains differentiable with respect to trainable times.
+#     """
 
-    if len(transition_epochs) == 0:
+#     if len(transition_epochs) == 0:
 
-        return torch.tensor(
-            0.0,
-            dtype=torch.float64,
-        )
+#         return torch.tensor(
+#             0.0,
+#             dtype=torch.float64,
+#         )
 
-    # Determine device/dtype from the first epoch if possible.
-    first_time = transition_epochs[0].time
+#     # Determine device/dtype from the first epoch if possible.
+#     first_time = transition_epochs[0].time
 
-    if isinstance(first_time, torch.Tensor):
+#     if isinstance(first_time, torch.Tensor):
 
-        prior = torch.zeros(
-            (),
-            device=first_time.device,
-            dtype=first_time.dtype,
-        )
+#         prior = torch.zeros(
+#             (),
+#             device=first_time.device,
+#             dtype=first_time.dtype,
+#         )
 
-    else:
+#     else:
 
-        prior = torch.tensor(
-            0.0,
-            dtype=torch.float64,
-        )
+#         prior = torch.tensor(
+#             0.0,
+#             dtype=torch.float64,
+#         )
 
-    factor_tensor = torch.as_tensor(
-        factor,
-        device=prior.device,
-        dtype=prior.dtype,
-    )
+#     factor_tensor = torch.as_tensor(
+#         factor,
+#         device=prior.device,
+#         dtype=prior.dtype,
+#     )
 
-    for epoch in transition_epochs:
+#     for epoch in transition_epochs:
 
-        time = _epoch_time(
-            epoch,
-            prior.device,
-            prior.dtype,
-        )
+#         time = _epoch_time(
+#             epoch,
+#             prior.device,
+#             prior.dtype,
+#         )
 
-        prior = prior + factor_tensor * time
+#         prior = prior + factor_tensor * time
 
-    return prior
+#     return prior

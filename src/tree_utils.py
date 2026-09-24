@@ -19,6 +19,7 @@ from src.dtos import (
 # POSTORDER TRAVERSAL
 # ============================================================
 
+
 def build_postorder(
     root: int,
     children: list[list[int]],
@@ -77,25 +78,21 @@ def build_postorder(
 # ============================================================
 # PREPARE TREE
 # ============================================================
-
 def prepare_tree(
     input_nodes: Sequence[Node],
     input_edges: Sequence[Edge],
     device: torch.device | str = "cpu",
 ) -> PreparedTree:
     """
-    Convert raw Node/Edge objects into a GPU-friendly
-    PreparedTree.
+    Convert raw Node/Edge objects into a PreparedTree.
 
-    Equivalent to the C++ prepareTree().
+    All persistent tree data remain NumPy arrays.
+    Only `time_t` is converted to a PyTorch tensor.
 
     The input node IDs may be arbitrary. They are converted
     to contiguous internal indices:
 
         original ID -> [0, 1, ..., N-1]
-
-    The resulting PreparedTree contains tensors for all
-    parameter-independent numerical data.
     """
 
     # ========================================================
@@ -103,14 +100,10 @@ def prepare_tree(
     # ========================================================
 
     if len(input_nodes) == 0:
-        raise ValueError(
-            "No input nodes were provided."
-        )
+        raise ValueError("No input nodes were provided.")
 
     if len(input_edges) == 0:
-        raise ValueError(
-            "No input edges were provided."
-        )
+        raise ValueError("No input edges were provided.")
 
     n = len(input_nodes)
     m = len(input_edges)
@@ -121,15 +114,10 @@ def prepare_tree(
     # ORIGINAL ID -> CONTIGUOUS INDEX
     # ========================================================
 
-    id_to_idx = {
-        node.id: i
-        for i, node in enumerate(input_nodes)
-    }
+    id_to_idx = {node.id: i for i, node in enumerate(input_nodes)}
 
     if len(id_to_idx) != n:
-        raise ValueError(
-            "Duplicate node IDs detected."
-        )
+        raise ValueError("Duplicate node IDs detected.")
 
     # ========================================================
     # NODE ARRAYS
@@ -140,25 +128,22 @@ def prepare_tree(
         dtype=np.int64,
     )
 
-    times = np.empty(
+    time = np.empty(
         n,
         dtype=np.float64,
     )
 
-    states = np.empty(
+    state = np.empty(
         n,
         dtype=np.int64,
     )
 
-    # parent[i] = parent node index
     parent = np.full(
         n,
         -1,
         dtype=np.int64,
     )
 
-    # edge_idx_to_parent[i] =
-    # index of edge connecting parent -> i
     edge_idx_to_parent = np.full(
         n,
         -1,
@@ -168,8 +153,8 @@ def prepare_tree(
     for i, node in enumerate(input_nodes):
 
         original_id[i] = node.id
-        times[i] = node.T
-        states[i] = node.state
+        time[i] = node.T
+        state[i] = node.state
 
     # ========================================================
     # EDGE ARRAYS
@@ -185,14 +170,9 @@ def prepare_tree(
         dtype=np.int64,
     )
 
-    # Python lists are used only during preprocessing.
-    # They are converted into compact arrays afterward.
-    children: list[list[int]] = [
-        []
-        for _ in range(n)
-    ]
+    # Used only while constructing the tree.
+    children = [[] for _ in range(n)]
 
-    # indegree is needed to identify the root.
     indegree = np.zeros(
         n,
         dtype=np.int64,
@@ -204,23 +184,11 @@ def prepare_tree(
 
     for edge_idx, edge in enumerate(input_edges):
 
-        # ----------------------------------------------------
-        # Parent
-        # ----------------------------------------------------
-
         if edge.u not in id_to_idx:
-            raise ValueError(
-                f"Unknown node ID in edge.u: {edge.u}"
-            )
-
-        # ----------------------------------------------------
-        # Child
-        # ----------------------------------------------------
+            raise ValueError(f"Unknown node ID in edge.u: {edge.u}")
 
         if edge.v not in id_to_idx:
-            raise ValueError(
-                f"Unknown node ID in edge.v: {edge.v}"
-            )
+            raise ValueError(f"Unknown node ID in edge.v: {edge.v}")
 
         u = id_to_idx[edge.u]
         v = id_to_idx[edge.v]
@@ -233,46 +201,33 @@ def prepare_tree(
         edge_child[edge_idx] = v
 
         # ----------------------------------------------------
-        # Store tree structure
+        # Store topology
         # ----------------------------------------------------
 
         children[u].append(v)
 
         if parent[v] != -1:
-            raise ValueError(
-                f"Node {edge.v} has multiple parents."
-            )
+            raise ValueError(f"Node {edge.v} has multiple parents.")
 
         parent[v] = u
         edge_idx_to_parent[v] = edge_idx
 
         indegree[v] += 1
 
-        # A rooted tree should have at most one incoming
-        # edge per node.
         if indegree[v] > 1:
-            raise ValueError(
-                f"Node {edge.v} has indegree > 1."
-            )
+            raise ValueError(f"Node {edge.v} has indegree > 1.")
 
     # ========================================================
     # ROOT
     # ========================================================
 
-    roots = np.flatnonzero(
-        indegree == 0
-    )
+    roots = np.flatnonzero(indegree == 0)
 
     if len(roots) == 0:
-        raise ValueError(
-            "No root found."
-        )
+        raise ValueError("No root found.")
 
     if len(roots) > 1:
-        raise ValueError(
-            f"Multiple roots detected: "
-            f"{roots.tolist()}"
-        )
+        raise ValueError(f"Multiple roots detected: " f"{roots.tolist()}")
 
     root = int(roots[0])
 
@@ -285,9 +240,10 @@ def prepare_tree(
         children=children,
     )
 
+    postorder = [int(node_id) for node_id in postorder]
+
     # --------------------------------------------------------
     # Verify that every node was reached.
-    # This also catches disconnected/cyclic structures.
     # --------------------------------------------------------
 
     if len(postorder) != n:
@@ -298,41 +254,18 @@ def prepare_tree(
         )
 
     # ========================================================
-    # CONVERT TO TORCH
+    # TORCH TIME
+    # ========================================================
+    #
+    # This is the only tree field converted to Torch. Static
+    # topology remains in Python lists for graph capture.
     # ========================================================
 
-    # from_numpy() avoids an unnecessary Python-level copy.
-    original_id_tensor = torch.from_numpy(
-        original_id
-    ).to(device=device)
-
-    time_tensor = torch.from_numpy(
-        times
-    ).to(device=device)
-
-    state_tensor = torch.from_numpy(
-        states
-    ).to(device=device)
-
-    parent_tensor = torch.from_numpy(
-        parent
-    ).to(device=device)
-
-    edge_idx_tensor = torch.from_numpy(
-        edge_idx_to_parent
-    ).to(device=device)
-
-    edge_parent_tensor = torch.from_numpy(
-        edge_parent
-    ).to(device=device)
-
-    edge_child_tensor = torch.from_numpy(
-        edge_child
-    ).to(device=device)
-
-    postorder_tensor = torch.from_numpy(
-        postorder
-    ).to(device=device)
+    time_t = torch.as_tensor(
+        time,
+        dtype=torch.get_default_dtype(),
+        device=device,
+    )
 
     # ========================================================
     # PREPARED TREE
@@ -340,60 +273,16 @@ def prepare_tree(
 
     return PreparedTree(
         root=root,
-
-        original_id=original_id_tensor,
-
-        time=time_tensor,
-
-        state=state_tensor,
-
-        parent=parent_tensor,
-
-        edge_idx_to_parent=edge_idx_tensor,
-
-        edge_parent=edge_parent_tensor,
-
-        edge_child=edge_child_tensor,
-
-        postorder=postorder_tensor,
-    )
-
-
-# ============================================================
-# OPTIONAL: MOVE PREPARED TREE
-# ============================================================
-
-def move_tree_to_device(
-    tree: PreparedTree,
-    device: torch.device | str,
-) -> PreparedTree:
-    """
-    Move a PreparedTree between CPU, CUDA, and MPS.
-
-    This is useful when trees are initially constructed on CPU
-    and moved to GPU immediately before optimization.
-    """
-
-    device = torch.device(device)
-
-    return PreparedTree(
-        root=tree.root,
-
-        original_id=tree.original_id.to(device),
-
-        time=tree.time.to(device),
-
-        state=tree.state.to(device),
-
-        parent=tree.parent.to(device),
-
-        edge_idx_to_parent=(
-            tree.edge_idx_to_parent.to(device)
-        ),
-
-        edge_parent=tree.edge_parent.to(device),
-
-        edge_child=tree.edge_child.to(device),
-
-        postorder=tree.postorder.to(device),
+        # Python static data
+        original_id=original_id.tolist(),
+        time=time.tolist(),
+        state=state.tolist(),
+        parent=parent.tolist(),
+        children=children,
+        edge_idx_to_parent=edge_idx_to_parent.tolist(),
+        edge_parent=edge_parent.tolist(),
+        edge_child=edge_child.tolist(),
+        postorder=postorder,
+        # Torch
+        time_t=time_t,
     )
