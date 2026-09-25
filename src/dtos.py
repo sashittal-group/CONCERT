@@ -68,6 +68,8 @@ class PreparedTree:
     # ========================================================
 
     postorder: list[int]
+    levels: list[list[int]]
+    level_batches: list[dict[str, torch.Tensor]]
 
     # ========================================================
     # TORCH TIME
@@ -158,4 +160,4 @@ def get_device():
 
 DEVICE = get_device()
 
-torch.set_default_dtype(torch.float32)
+torch.set_default_dtype(torch.float64)

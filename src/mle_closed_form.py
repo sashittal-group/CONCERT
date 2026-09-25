@@ -19,7 +19,7 @@ from src.dtos import (
 
 from src.closed_form_coord import (
     calculate_Us,
-    calculate_log_likelihood_closed,
+    calculate_log_likelihood_levelwise,
 )
 
 
@@ -121,6 +121,8 @@ def move_tree_to_device(
         edge_parent=tree.edge_parent,
         edge_child=tree.edge_child,
         postorder=tree.postorder,
+        levels=tree.levels,
+        level_batches=tree.level_batches,
         time_t=tree.time_t.to(device),
     )
 
@@ -498,7 +500,7 @@ def calculate_total_log_likelihood(
 
     for tree in trees:
 
-        result = calculate_log_likelihood_closed(
+        result = calculate_log_likelihood_levelwise(
             tree,
             birth_rates,
             death_rates,
@@ -641,6 +643,7 @@ def optimize_parameters(
     optimizer_name: str = "adam",
     learning_rate: float = 0.01,
     max_steps: int = 5000,
+    patience: int = 500,
     # Used by LBFGS.
     lbfgs_max_iter: int = 20,
     lbfgs_history_size: int = 100,
@@ -680,6 +683,9 @@ def optimize_parameters(
 
     else:
         device = torch.device(device)
+
+    if patience < 1:
+        raise ValueError("patience must be at least 1")
 
     print(f"Using device: {device}")
     print("[timing] optimization setup started", flush=True)
@@ -793,18 +799,27 @@ def optimize_parameters(
     # ADAM
     # ========================================================
 
-    model = LikelihoodModel(
-        params=params,
-        trees=trees,
-    )
-
     compile_start = time.perf_counter()
-    model = torch.compile(
-        model, fullgraph=True
-    )
+    chunk_size = 10
+    compiled_models = []
+
+    for start in range(0, len(trees), chunk_size):
+        chunk_model = LikelihoodModel(
+            params=params,
+            trees=trees[start:start + chunk_size],
+        )
+        compiled_models.append(
+            torch.compile(
+                chunk_model,
+                fullgraph=False,
+            )
+        )
+
     _timed_log("torch.compile request returned", compile_start, device)
 
     if optimizer_name == "adam":
+
+        steps_without_improvement = 0
 
         for step in range(1, max_steps + 1):
 
@@ -813,7 +828,9 @@ def optimize_parameters(
             optimizer.zero_grad(set_to_none=True)
 
             forward_start = time.perf_counter()
-            loss = -model()
+            loss = -torch.stack(
+                [compiled_model() for compiled_model in compiled_models]
+            ).sum()
             if step == 1:
                 _timed_log(
                     "step 1 forward (includes graph construction)",
@@ -855,10 +872,14 @@ def optimize_parameters(
             if current_LL > best_LL:
 
                 best_LL = current_LL
+                steps_without_improvement = 0
 
                 # Save the parameters that produced current_LL, which was
                 # computed immediately before the optimizer update.
                 best_state = state_before_step
+
+            else:
+                steps_without_improvement += 1
 
             # ------------------------------------------------
             # Logging
@@ -872,6 +893,14 @@ def optimize_parameters(
                     params=params,
                     logfile=log_file,
                 )
+
+            if steps_without_improvement >= patience:
+                print(
+                    f"Early stopping at step {step}: objective did not improve "
+                    f"for {patience} steps.",
+                    flush=True,
+                )
+                break
 
     # ========================================================
     # LBFGS

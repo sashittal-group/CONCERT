@@ -75,6 +75,24 @@ def build_postorder(
     )
 
 
+def build_levels(
+    root: int,
+    children: list[list[int]],
+) -> list[list[int]]:
+    levels = []
+    current = [root]
+
+    while current:
+        levels.append(current)
+        current = [
+            child
+            for node_id in current
+            for child in children[node_id]
+        ]
+
+    return list(reversed(levels))
+
+
 # ============================================================
 # PREPARE TREE
 # ============================================================
@@ -242,6 +260,71 @@ def prepare_tree(
 
     postorder = [int(node_id) for node_id in postorder]
 
+    levels = build_levels(
+        root=root,
+        children=children,
+    )
+
+    level_batches = []
+
+    for level in levels[:-1]:
+        leaf_nodes = [node_id for node_id in level if not children[node_id]]
+        internal_nodes = [node_id for node_id in level if children[node_id]]
+
+        batch = {}
+
+        if leaf_nodes:
+            batch["leaf_edge_ids"] = torch.tensor(
+                [int(edge_idx_to_parent[node_id]) for node_id in leaf_nodes],
+                dtype=torch.long,
+                device=device,
+            )
+            batch["leaf_states"] = torch.tensor(
+                [int(state[node_id]) for node_id in leaf_nodes],
+                dtype=torch.long,
+                device=device,
+            )
+            batch["leaf_parent_times"] = torch.tensor(
+                [float(time[parent[node_id]]) for node_id in leaf_nodes],
+                dtype=torch.get_default_dtype(),
+                device=device,
+            )
+            batch["leaf_child_times"] = torch.tensor(
+                [float(time[node_id]) for node_id in leaf_nodes],
+                dtype=torch.get_default_dtype(),
+                device=device,
+            )
+
+        if internal_nodes:
+            batch["internal_edge_ids"] = torch.tensor(
+                [int(edge_idx_to_parent[node_id]) for node_id in internal_nodes],
+                dtype=torch.long,
+                device=device,
+            )
+            batch["internal_child_edge_ids"] = torch.tensor(
+                [
+                    [
+                        int(edge_idx_to_parent[children[node_id][0]]),
+                        int(edge_idx_to_parent[children[node_id][1]]),
+                    ]
+                    for node_id in internal_nodes
+                ],
+                dtype=torch.long,
+                device=device,
+            )
+            batch["internal_parent_times"] = torch.tensor(
+                [float(time[parent[node_id]]) for node_id in internal_nodes],
+                dtype=torch.get_default_dtype(),
+                device=device,
+            )
+            batch["internal_child_times"] = torch.tensor(
+                [float(time[node_id]) for node_id in internal_nodes],
+                dtype=torch.get_default_dtype(),
+                device=device,
+            )
+
+        level_batches.append(batch)
+
     # --------------------------------------------------------
     # Verify that every node was reached.
     # --------------------------------------------------------
@@ -283,6 +366,8 @@ def prepare_tree(
         edge_parent=edge_parent.tolist(),
         edge_child=edge_child.tolist(),
         postorder=postorder,
+        levels=levels,
+        level_batches=level_batches,
         # Torch
         time_t=time_t,
     )

@@ -433,28 +433,19 @@ def calculate_log_likelihood_closed(
                 # are included.
                 # --------------------------------------------
 
-                current_LL_values = []
-
-                for s in range(num_states):
-
-                    probabilities = transition_probabilities[s]
-
-                    # Zero transition probabilities are valid, but log(0)
-                    # creates undefined gradients during optimization.
-                    log_probabilities = torch.log(
-                        probabilities.clamp_min(torch.finfo(dtype).tiny)
+                # Batch all destination states at once. The first dimension
+                # of transition_probabilities is the destination state and
+                # the second is the source state.
+                log_probabilities = torch.log(
+                    transition_probabilities.clamp_min(
+                        torch.finfo(dtype).tiny
                     )
+                )
 
-                    likelihood_terms = previous_LL + log_probabilities
-
-                    current_LL_values.append(
-                        torch.logsumexp(
-                            likelihood_terms,
-                            dim=0,
-                        )
-                    )
-
-                previous_LL = torch.stack(current_LL_values)
+                previous_LL = torch.logsumexp(
+                    previous_LL[None, :] + log_probabilities,
+                    dim=1,
+                )
 
                 previous_time = time
 
@@ -528,6 +519,148 @@ def calculate_log_likelihood_closed(
     return LikelihoodResult(
         root_loglikelihood=root_loglikelihood,
         LL=LL,
+    )
+
+
+def calculate_log_likelihood_levelwise(
+    tree: PreparedTree,
+    birth_rates: torch.Tensor,
+    death_rates: torch.Tensor,
+    transition_probabilities: torch.Tensor,
+    sampling_probabilities: torch.Tensor,
+    Cs: torch.Tensor,
+    transition_times,
+) -> LikelihoodResult:
+    """Calculate likelihoods by batching independent tree levels."""
+
+    device = birth_rates.device
+    dtype = birth_rates.dtype
+    num_states = birth_rates.shape[0]
+    log_birth = torch.log(birth_rates)
+    log_sampling = torch.log(
+        sampling_probabilities.clamp_min(torch.finfo(dtype).tiny)
+    )
+    log_probabilities = torch.log(
+        transition_probabilities.clamp_min(torch.finfo(dtype).tiny)
+    )
+    rates = birth_rates - death_rates
+
+    edge_ll = torch.zeros(
+        (tree.num_edges, num_states),
+        dtype=dtype,
+        device=device,
+    )
+
+    def propagate_batch(boundary, parent_time, child_time):
+        previous_ll = boundary
+        previous_time = child_time
+
+        for n in range(1, len(transition_times)):
+            transition_time = transition_times[n]
+            previous_transition_time = transition_times[n - 1]
+            crosses_epoch = (parent_time > transition_time) & (
+                transition_time > child_time
+            )
+
+            exp_previous = torch.exp(
+                -rates[None, :] * (previous_time[:, None] - previous_transition_time)
+            )
+            exp_current = torch.exp(
+                -rates[None, :] * (transition_time - previous_transition_time)
+            )
+            flow = -rates[None, :] * (transition_time - previous_time[:, None])
+            flow = flow + 2.0 * (
+                torch.log(1.0 - Cs[n - 1][None, :] * exp_previous)
+                - torch.log(1.0 - Cs[n - 1][None, :] * exp_current)
+            )
+
+            propagated = previous_ll + flow
+            transitioned = torch.logsumexp(
+                propagated[:, None, :] + log_probabilities[None, :, :],
+                dim=2,
+            )
+            mask = crosses_epoch[:, None]
+            previous_ll = torch.where(mask, transitioned, previous_ll)
+            previous_time = torch.where(
+                crosses_epoch,
+                torch.full_like(previous_time, transition_time),
+                previous_time,
+            )
+
+        closest_epoch = torch.sum(
+            parent_time[:, None]
+            > torch.as_tensor(
+                transition_times[1:],
+                dtype=dtype,
+                device=device,
+            ),
+            dim=1,
+        )
+        final_transition_time = torch.as_tensor(
+            transition_times,
+            dtype=dtype,
+            device=device,
+        )[closest_epoch]
+        final_cs = Cs[closest_epoch]
+
+        exp_previous = torch.exp(
+            -rates[None, :] * (previous_time[:, None] - final_transition_time[:, None])
+        )
+        exp_parent = torch.exp(
+            -rates[None, :] * (parent_time[:, None] - final_transition_time[:, None])
+        )
+        final_flow = -rates[None, :] * (
+            parent_time[:, None] - previous_time[:, None]
+        )
+        final_flow = final_flow + 2.0 * (
+            torch.log(1.0 - final_cs * exp_previous)
+            - torch.log(1.0 - final_cs * exp_parent)
+        )
+        return torch.where(
+            (parent_time > previous_time)[:, None],
+            previous_ll + final_flow,
+            previous_ll,
+        )
+
+    for batch in tree.level_batches:
+
+        if "leaf_edge_ids" in batch:
+            edge_ids = batch["leaf_edge_ids"]
+            states = batch["leaf_states"]
+            boundary = torch.full(
+                (edge_ids.shape[0], num_states),
+                -torch.inf,
+                dtype=dtype,
+                device=device,
+            ).scatter(
+                1,
+                states[:, None],
+                log_sampling[states, None],
+            )
+            values = propagate_batch(
+                boundary,
+                batch["leaf_parent_times"],
+                batch["leaf_child_times"],
+            )
+            edge_ll = edge_ll.index_copy(0, edge_ids, values)
+
+        if "internal_edge_ids" in batch:
+            edge_ids = batch["internal_edge_ids"]
+            child_edge_ids = batch["internal_child_edge_ids"]
+            boundary = log_birth + edge_ll[child_edge_ids].sum(dim=1)
+            values = propagate_batch(
+                boundary,
+                batch["internal_parent_times"],
+                batch["internal_child_times"],
+            )
+            edge_ll = edge_ll.index_copy(0, edge_ids, values)
+
+    root_child = tree.children[tree.root][0]
+    root_edge = tree.edge_idx_to_parent[root_child]
+
+    return LikelihoodResult(
+        root_loglikelihood=edge_ll[root_edge, 0],
+        LL=edge_ll,
     )
 
 

@@ -120,6 +120,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--patience",
+        type=int,
+        default=500,
+        help="Stop Adam after this many steps without objective improvement.",
+    )
+
+    parser.add_argument(
         "--device",
         type=str,
         default=None,
@@ -422,24 +429,21 @@ def main():
         # INITIAL PARAMETERS
         # ====================================================
 
-        initial_birth_rates = [8, 7]
+        # initial_birth_rates = [8, 7]
 
-        initial_death_rates = [0.5, 0.2]
+        # initial_death_rates = [0.5, 0.2]
 
-        initial_sampling_probabilities = [0.5, 0.6]
+        # initial_sampling_probabilities = [0.5, 0.6]
+        # initial_transition_probabilities = [
+        #     [0.5, 0.5],
+        #     [0.0, 1.0],
+        # ]
 
-        # Same as the C++:
-        #
-        # const vector<vector<long double>>
-        # initial_transition_probabilities = {
-        #     {0.5, 0.5},
-        #     {0.0, 1.0}
-        # };
+        initial_birth_rates = None
+        initial_death_rates = None
+        initial_sampling_probabilities = None
+        initial_transition_probabilities = None
 
-        initial_transition_probabilities = [
-            [0.5, 0.5],
-            [0.0, 1.0],
-        ]
 
         initial_transition_times = None
 
@@ -506,6 +510,7 @@ def main():
             optimizer_name=(args.optimizer),
             learning_rate=(args.learning_rate),
             max_steps=(args.max_steps),
+            patience=(args.patience),
             device=device,
         )
 
