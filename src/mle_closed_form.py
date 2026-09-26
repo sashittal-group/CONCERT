@@ -155,10 +155,11 @@ class PhylodynamicParameters(nn.Module):
         device: torch.device,
         initial_birth_rates=None,
         initial_death_rates=None,
+        given_death_rates=None,
         initial_sampling_probabilities=None,
         initial_transition_probabilities=None,
-        max_birth_rate: float = 10.0,
-        max_death_rate: float = 1.0,
+        max_birth_rate: float = 20.0,
+        max_death_rate: float = 10.0,
     ):
         super().__init__()
 
@@ -190,8 +191,11 @@ class PhylodynamicParameters(nn.Module):
         if initial_birth_rates is None:
             initial_birth_rates = [5.0] * num_states
 
-        if initial_death_rates is None:
+        if initial_death_rates is None and given_death_rates is None:
             initial_death_rates = [1.0] * num_states
+
+        if given_death_rates is not None:
+            initial_death_rates = given_death_rates
 
         if initial_sampling_probabilities is None:
             initial_sampling_probabilities = [0.5] * num_states
@@ -227,21 +231,17 @@ class PhylodynamicParameters(nn.Module):
         if torch.any(initial_death > max_death_rate):
             raise ValueError("initial_death_rates must be <= " "max_death_rate")
 
-        # ----------------------------------------------------
-        # death =
-        #
-        # max_death_rate * sigmoid(death_raw)
-        # ----------------------------------------------------
-
-        death_fraction = initial_death / max_death_rate
-
-        death_fraction = torch.clamp(
-            death_fraction,
-            1e-8,
-            1.0 - 1e-8,
-        )
-
-        self.death_raw = nn.Parameter(inverse_sigmoid(death_fraction))
+        if given_death_rates is None:
+            # death = max_death_rate * sigmoid(death_raw)
+            death_fraction = initial_death / max_death_rate
+            death_fraction = torch.clamp(
+                death_fraction,
+                1e-8,
+                1.0 - 1e-8,
+            )
+            self.death_raw = nn.Parameter(inverse_sigmoid(death_fraction))
+        else:
+            self.register_buffer("fixed_death_rates", initial_death.clone())
 
         # ----------------------------------------------------
         # birth =
@@ -373,6 +373,8 @@ class PhylodynamicParameters(nn.Module):
 
     @property
     def death_rates(self) -> torch.Tensor:
+        if hasattr(self, "fixed_death_rates"):
+            return self.fixed_death_rates
 
         return self.max_death_rate * torch.sigmoid(self.death_raw)
 
@@ -457,6 +459,8 @@ def calculate_total_log_likelihood(
     params: PhylodynamicParameters,
     trees: list[PreparedTree],
     static_transition_times: list[float] | None = None,
+    root_time: float = 1.0,
+    normalize_root_likelihood: bool = False,
 ) -> torch.Tensor:
     """
     Calculate the total log likelihood across all trees.
@@ -484,6 +488,7 @@ def calculate_total_log_likelihood(
         sampling_probabilities,
         transition_probabilities,
         transition_times,
+        root_time=root_time,
     )
 
     # print(f"U_result: {U_result}")
@@ -511,6 +516,8 @@ def calculate_total_log_likelihood(
         )
 
         LL = LL + result.root_loglikelihood
+        if normalize_root_likelihood:
+            LL = LL - torch.log1p(-U_result.root_U[0])
 
         # print(f"Result for tree: {result.LL}")
 
@@ -601,11 +608,13 @@ class LikelihoodModel(nn.Module):
         self,
         params,
         trees,
+        normalize_root_likelihood: bool = False,
     ):
         super().__init__()
 
         self.params = params
         self.trees = trees
+        self.normalize_root_likelihood = normalize_root_likelihood
         self.static_transition_times = (
             params.transition_times.detach().cpu().tolist()
         )
@@ -616,6 +625,7 @@ class LikelihoodModel(nn.Module):
             params=self.params,
             trees=self.trees,
             static_transition_times=self.static_transition_times,
+            normalize_root_likelihood=self.normalize_root_likelihood,
         )
 
 
@@ -633,6 +643,7 @@ def optimize_parameters(
     # ] = None,
     initial_birth_rates=None,
     initial_death_rates=None,
+    given_death_rates=None,
     initial_sampling_probabilities=None,
     initial_transition_probabilities=None,
     # given_birth_rates=None,
@@ -648,30 +659,9 @@ def optimize_parameters(
     lbfgs_max_iter: int = 20,
     lbfgs_history_size: int = 100,
     device: Optional[torch.device | str] = None,
+    normalize_root_likelihood: bool = False,
 ):
-    """
-    Optimize the phylodynamic likelihood using PyTorch.
-
-    IMPORTANT:
-
-    given_birth_rates
-        -> fixed, not optimized
-
-    given_sampling_probabilities
-        -> fixed, not optimized
-
-    initial_*
-        -> starting values only
-
-    zero_death=True
-        -> all death rates fixed to zero
-
-    optimizer_name:
-        "adam"
-        or
-        "lbfgs"
-    """
-
+    
     total_start = time.perf_counter()
 
     # ========================================================
@@ -712,6 +702,7 @@ def optimize_parameters(
         device=device,
         initial_birth_rates=(initial_birth_rates),
         initial_death_rates=(initial_death_rates),
+        given_death_rates=(given_death_rates),
         initial_sampling_probabilities=(initial_sampling_probabilities),
         initial_transition_probabilities=(initial_transition_probabilities),
         given_transition_times=(given_transition_times),
@@ -745,6 +736,7 @@ def optimize_parameters(
         LL = calculate_total_log_likelihood(
             params=params,
             trees=trees,
+            normalize_root_likelihood=normalize_root_likelihood,
         )
 
         return OptimizationResult(
@@ -807,6 +799,7 @@ def optimize_parameters(
         chunk_model = LikelihoodModel(
             params=params,
             trees=trees[start:start + chunk_size],
+            normalize_root_likelihood=normalize_root_likelihood,
         )
         compiled_models.append(
             torch.compile(
@@ -921,6 +914,7 @@ def optimize_parameters(
             LL = calculate_total_log_likelihood(
                 params=params,
                 trees=trees,
+                normalize_root_likelihood=normalize_root_likelihood,
             )
 
             loss = -LL
@@ -975,6 +969,7 @@ def optimize_parameters(
             params=params,
             trees=trees,
             static_transition_times=(given_transition_times),
+            normalize_root_likelihood=normalize_root_likelihood,
         )
 
     # ========================================================

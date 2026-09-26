@@ -96,6 +96,12 @@ def parse_args():
         action="store_true",
     )
 
+    parser.add_argument(
+        "--normalize-root-likelihood",
+        action="store_true",
+        help="Normalize each tree likelihood by 1 - U(root time).",
+    )
+
     # --------------------------------------------------------
     # PyTorch-specific options
     # --------------------------------------------------------
@@ -283,9 +289,11 @@ def write_result(
 # ============================================================
 
 
-def main():
+def main(normalize_root_likelihood: bool | None = None):
 
     args = parse_args()
+    if normalize_root_likelihood is None:
+        normalize_root_likelihood = args.normalize_root_likelihood
 
     # --------------------------------------------------------
     # Settings
@@ -452,6 +460,7 @@ def main():
         # ====================================================
 
         given_birth_rates = None
+        # given_death_rates = [0.2, 0.5]
 
         # Same as:
         #
@@ -505,6 +514,7 @@ def main():
             initial_death_rates=(initial_death_rates),
             initial_sampling_probabilities=(initial_sampling_probabilities),
             initial_transition_probabilities=(initial_transition_probabilities),
+            # given_death_rates=(given_death_rates),
             # given_birth_rates=(given_birth_rates),
             # given_sampling_probabilities=(given_sampling_probabilities),
             optimizer_name=(args.optimizer),
@@ -512,6 +522,7 @@ def main():
             max_steps=(args.max_steps),
             patience=(args.patience),
             device=device,
+            normalize_root_likelihood=normalize_root_likelihood,
         )
 
         # ====================================================

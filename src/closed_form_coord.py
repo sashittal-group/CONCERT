@@ -36,6 +36,7 @@ def calculate_Us(
     sampling_probabilities: torch.Tensor,
     transition_probabilities: torch.Tensor,
     transition_times: torch.Tensor,
+    root_time: float = 1.0,
 ) -> UResult:
 
     if birth_rates.ndim != 1:
@@ -51,6 +52,10 @@ def calculate_Us(
 
     if num_steps == 0:
         raise ValueError("transition_times cannot be empty")
+
+    evaluation_times = torch.cat(
+        (transition_times, transition_times.new_tensor([root_time]))
+    )
 
     # --------------------------------------------------------
     # U[0,:] = 1 - rho
@@ -88,10 +93,10 @@ def calculate_Us(
     # Epoch recursion
     # --------------------------------------------------------
 
-    for n in range(1, num_steps):
+    for n in range(1, len(evaluation_times)):
 
-        prev_time = transition_times[n - 1]
-        time = transition_times[n]
+        prev_time = evaluation_times[n - 1]
+        time = evaluation_times[n]
 
         dt = time - prev_time
 
@@ -123,6 +128,10 @@ def calculate_Us(
         #
         # U[n] = Q @ flow_U[n]
         # ----------------------------------------------------
+
+        if n == num_steps:
+            root_U = flow_U_n
+            continue
 
         U_n = transition_probabilities @ flow_U_n
 
@@ -169,6 +178,7 @@ def calculate_Us(
         U=U,
         flow_U=flow_Us,
         Cs=Cs,
+        root_U=root_U,
     )
 
 

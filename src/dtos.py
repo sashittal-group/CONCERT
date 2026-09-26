@@ -124,6 +124,7 @@ class UResult:
     U: torch.Tensor
     flow_U: torch.Tensor
     Cs: torch.Tensor
+    root_U: torch.Tensor
 
 
 # ============================================================
