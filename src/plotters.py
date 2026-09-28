@@ -257,8 +257,19 @@ def plot_differentiation_tree(
     plt.show()
 
 
-def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_event_lines=False, red_edges=None, figsize=(8, 5), maxtime=None,
-                          diff_times=None):
+def draw_ultrametric_tree(
+    T,
+    root,
+    diff_T=None,
+    add_labels=True,
+    draw_birth_event_lines=False,
+    red_edges=None,
+    figsize=(8, 5),
+    maxtime=None,
+    diff_times=None,
+    transition_times_of_edges=None,
+    node_colors=None,
+):
     # Heights from root
     height = {}
 
@@ -284,6 +295,57 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
 
     # Use negative heights for plotting (root at top)
     y = {n: -height[n] for n in T.nodes}
+    total_height = max(height.values())
+    root_time = T.nodes[root].get("T", 1.0)
+
+    node_id_lookup = {}
+    for node in T.nodes:
+        node_name = getattr(node, "name", None)
+        for node_id in (node, node_name, str(node), str(node_name)):
+            if node_id is not None:
+                try:
+                    node_id_lookup[node_id] = node
+                except TypeError:
+                    pass
+
+    def resolve_node(node_id):
+        try:
+            if node_id in T:
+                return node_id
+        except TypeError:
+            pass
+        try:
+            return node_id_lookup.get(node_id, node_id_lookup.get(str(node_id)))
+        except TypeError:
+            return node_id_lookup.get(str(node_id))
+
+    state_by_node = {}
+    if node_colors is not None:
+        for node_id, state in node_colors:
+            node = resolve_node(node_id)
+            if node is not None:
+                state_by_node[node] = state
+
+    transitions_by_edge = {}
+    if transition_times_of_edges is not None:
+        for parent_id, child_id, state_0, state_1, transition_time in transition_times_of_edges:
+            parent = resolve_node(parent_id)
+            child = resolve_node(child_id)
+            if parent is None or child is None or not T.has_edge(parent, child):
+                continue
+            transitions_by_edge[(parent, child)] = (
+                state_0,
+                state_1,
+                float(transition_time),
+            )
+
+    color_edges_by_state = node_colors is not None or transition_times_of_edges is not None
+
+    def state_color(state, default="black"):
+        try:
+            return color_map.get(state, color_map.get(str(state), default))
+        except TypeError:
+            return color_map.get(str(state), default)
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -292,13 +354,60 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
         children = list(T.successors(u))
         if not children:
             continue
-        xs = [x[c] for c in children]
-        ax.plot([min(xs), max(xs)], [y[u], y[u]], color="black", alpha=0.3)
         for c in children:
-            color = "black"
+            transition = transitions_by_edge.get((u, c))
+            if transition is not None:
+                state_0, state_1, transition_time = transition
+            else:
+                state_0 = state_by_node.get(u, T.nodes[u].get("state"))
+                state_1 = state_by_node.get(c, T.nodes[c].get("state"))
+                transition_time = None
+
+                if state_0 is None:
+                    state_0 = state_1
+                if state_1 is None:
+                    state_1 = state_0
+
+            color_0 = state_color(state_0) if color_edges_by_state else "black"
+            color_1 = state_color(state_1) if color_edges_by_state else "black"
+            line_alpha = 0.5 if color_edges_by_state else 0.3
+
+            # Each horizontal arm follows its outgoing edge's source state.
+            ax.plot(
+                [x[u], x[c]],
+                [y[u], y[u]],
+                color=color_0,
+                alpha=line_alpha,
+            )
+
+            color = color_0
             if red_edges and (u, c) in red_edges:
                 color = "red"
-            ax.plot([x[c], x[c]], [y[u], y[c]], color=color, alpha=0.3)
+
+            if transition_time is None or color_0 == color_1:
+                ax.plot(
+                    [x[c], x[c]],
+                    [y[u], y[c]],
+                    color=color,
+                    alpha=0.5 if color_edges_by_state or color == "red" else 0.3,
+                )
+            else:
+                transition_y = -(height[root] + root_time - transition_time)
+                if min(y[u], y[c]) <= transition_y <= max(y[u], y[c]):
+                    ax.plot(
+                        [x[c], x[c]],
+                        [y[u], transition_y],
+                        color=color_0,
+                        alpha=0.8,
+                    )
+                    ax.plot(
+                        [x[c], x[c]],
+                        [transition_y, y[c]],
+                        color=color_1,
+                        alpha=0.8,
+                    )
+                else:
+                    ax.plot([x[c], x[c]], [y[u], y[c]], color=color, alpha=0.5)
             if add_labels:
                 w = T[u][c]["length"]
                 y_mid = (y[u] + y[c]) / 2
@@ -306,8 +415,8 @@ def draw_ultrametric_tree(T, root, diff_T=None, add_labels=True, draw_birth_even
 
     # Draw nodes
     for n in T.nodes:
-        state = T.nodes[n].get("state") or T.nodes[n].get("state")
-        color = color_map.get(state, "black")
+        state = state_by_node.get(n, T.nodes[n].get("state"))
+        color = state_color(state)
         ax.scatter(x[n], y[n], color=color, zorder=3, s=5, alpha=0.3)
         node_str = str(n)
         if add_labels and state:

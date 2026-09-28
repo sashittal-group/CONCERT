@@ -122,7 +122,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from src.dtos import (
+from dtos import (
     Node,
     Edge,
 )

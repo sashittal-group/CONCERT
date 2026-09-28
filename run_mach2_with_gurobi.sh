@@ -39,5 +39,5 @@ cd "$project_root"
 exec "$mach2" \
     data/KPTracer-Data/processed_data/1461.tree \
     data/KPTracer-Data/processed_data/1461.labeling \
-    -p T1 \
+    -p 0 \
     -o data/KPTracer-Data/processed_data
