@@ -1,78 +1,101 @@
 num_batches = 10
 trees_per_batch = 10
-num_states = 2
 seed_stride = 100
 batch_indices = range(num_batches)
 tree_indices = range(trees_per_batch)
-setting_file = "setting.txt"
-simulation_dir = "data/simulation/coord_diff/setting_0"
+setting_root = "data/simulation/coord_diff"
+setting_ids = glob_wildcards(f"{setting_root}/setting_{{setting}}/setting.txt").setting
 transition_edges_file = "src/transition_edges.txt"
+
+
+def setting_num_states(setting):
+    setting_file = f"{setting_root}/setting_{setting}/setting.txt"
+    with open(setting_file) as settings:
+        for line in settings:
+            value = line.split("#", 1)[0].strip()
+            if value:
+                return int(value.split()[0])
+    raise ValueError(f"No state count found in {setting_file}")
+
 
 rule all:
     input:
-        expand(f"{simulation_dir}/batch_{{batch}}/inference.out", batch=batch_indices),
         # expand(
-        #     f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/edges.csv",
+        #     f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/edges.csv",
+        #     setting=setting_ids,
         #     batch=batch_indices,
         #     tree=tree_indices,
-        # )
+        # ),
+        expand(
+            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.out",
+            setting=setting_ids,
+            batch=batch_indices,
+        ),
 
 
 rule simulate:
+    input:
+        setting_file=f"{setting_root}/setting_{{setting}}/setting.txt",
     output:
-        nodes=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/nodes.csv",
-        edges=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/edges.csv",
-        T_fig=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/T.png",
-        T_extant_fig=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/T_extant.png",
-        transition_times=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/transition_times.csv",
-        transitions_with_edges=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/transition_times_with_edges.csv",
+        nodes=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/nodes.csv",
+        edges=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/edges.csv",
+        T_fig=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/T.png",
+        T_extant_fig=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/T_extant.png",
+        transition_times=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/transition_times.csv",
+        transitions_with_edges=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/transition_times_with_edges.csv",
     params:
         source_seed=lambda wildcards: (
             int(wildcards.batch) * trees_per_batch + int(wildcards.tree)
         ) * seed_stride,
         output_dir=lambda wildcards: (
-            f"{simulation_dir}/batch_{wildcards.batch}/tree_{wildcards.tree}"
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/tree_{wildcards.tree}"
         ),
     log:
-        std=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/stdout.log",
-        err=f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/stderr.log",
+        std=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/stdout.log",
+        err=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/stderr.log",
     benchmark:
-        f"{simulation_dir}/batch_{{batch}}/tree_{{tree}}/benchmark.txt",
+        f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/benchmark.txt",
     shell:
-        "python -m src.simulator {setting_file:q} {params.source_seed} {params.output_dir:q} "
+        "python -m src.simulator {input.setting_file:q} {params.source_seed} {params.output_dir:q} "
         " > {log.std:q} 2> {log.err:q}"
 
 
 rule infer_batch:
     input:
         nodes=lambda wildcards: expand(
-            f"{simulation_dir}/batch_{wildcards.batch}/tree_{{tree}}/nodes.csv",
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/tree_{{tree}}/nodes.csv",
             tree=tree_indices,
         ),
         edges=lambda wildcards: expand(
-            f"{simulation_dir}/batch_{wildcards.batch}/tree_{{tree}}/edges.csv",
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/tree_{{tree}}/edges.csv",
             tree=tree_indices,
         ),
     output:
-        out=f"{simulation_dir}/batch_{{batch}}/inference.out",
+        out=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.out",
     params:
         tree_path_regex=lambda wildcards: (
-            rf"{simulation_dir}/batch_{wildcards.batch}/tree_\d+/edges\.csv"
+            rf"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/tree_\d+/edges\.csv"
         ),
         num_trees=trees_per_batch,
-        num_states=num_states,
+        num_states=lambda wildcards: setting_num_states(wildcards.setting),
     log:
-        optimization=f"{simulation_dir}/batch_{{batch}}/inference.log",
-        stdout=f"{simulation_dir}/batch_{{batch}}/inference.stdout.log",
-        stderr=f"{simulation_dir}/batch_{{batch}}/inference.stderr.log",
+        optimization=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.log",
+        stdout=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.stdout.log",
+        stderr=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.stderr.log",
     benchmark:
-        f"{simulation_dir}/batch_{{batch}}/inference.benchmark",
+        f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.benchmark",
     shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
         "python -m src.main {params.tree_path_regex:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-edges-file {transition_edges_file:q} "
         "--output {output.out:q} --log {log.optimization:q} "
-        " --device cpu --optimizer adam "
+        " --device cpu --optimizer adam --normalize-root-likelihood "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 

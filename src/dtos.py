@@ -139,6 +139,8 @@ class OptimizationResult:
     death_rates: torch.Tensor
 
     sampling_probabilities: torch.Tensor
+    transition_probabilities: Optional[torch.Tensor] = None
+    transition_times: Optional[torch.Tensor] = None
 
 
 # ============================================================
