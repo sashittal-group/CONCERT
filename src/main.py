@@ -75,11 +75,6 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--zero-death",
-        action="store_true",
-    )
-
-    parser.add_argument(
         "--output",
         type=str,
         required=True,

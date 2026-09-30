@@ -122,7 +122,7 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from dtos import (
+from src.dtos import (
     Node,
     Edge,
 )
@@ -201,3 +201,18 @@ def load_edges(file: str) -> list[Edge]:
     print(f"LOADED {len(edges)} EDGES")
 
     return edges
+
+
+def load_transition_times(file: str) -> pd.DataFrame:
+
+    print("LOADING TRANSITION TIMES ...")
+
+    file = Path(file)
+
+    if not file.exists():
+        raise RuntimeError(f"Failed to open file: {file}")
+
+    df = pd.read_csv(file)
+
+
+    return df

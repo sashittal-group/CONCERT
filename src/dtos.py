@@ -140,10 +140,6 @@ class OptimizationResult:
 
     sampling_probabilities: torch.Tensor
 
-    transition_probabilities: torch.Tensor
-
-    transition_times: torch.Tensor
-
 
 # ============================================================
 # DEVICE HELPERS

@@ -447,9 +447,7 @@ def calculate_log_likelihood_closed(
                 # of transition_probabilities is the destination state and
                 # the second is the source state.
                 log_probabilities = torch.log(
-                    transition_probabilities.clamp_min(
-                        torch.finfo(dtype).tiny
-                    )
+                    transition_probabilities.clamp_min(torch.finfo(dtype).tiny)
                 )
 
                 previous_LL = torch.logsumexp(
@@ -547,9 +545,7 @@ def calculate_log_likelihood_levelwise(
     dtype = birth_rates.dtype
     num_states = birth_rates.shape[0]
     log_birth = torch.log(birth_rates)
-    log_sampling = torch.log(
-        sampling_probabilities.clamp_min(torch.finfo(dtype).tiny)
-    )
+    log_sampling = torch.log(sampling_probabilities.clamp_min(torch.finfo(dtype).tiny))
     log_probabilities = torch.log(
         transition_probabilities.clamp_min(torch.finfo(dtype).tiny)
     )
@@ -619,9 +615,7 @@ def calculate_log_likelihood_levelwise(
         exp_parent = torch.exp(
             -rates[None, :] * (parent_time[:, None] - final_transition_time[:, None])
         )
-        final_flow = -rates[None, :] * (
-            parent_time[:, None] - previous_time[:, None]
-        )
+        final_flow = -rates[None, :] * (parent_time[:, None] - previous_time[:, None])
         final_flow = final_flow + 2.0 * (
             torch.log(1.0 - final_cs * exp_previous)
             - torch.log(1.0 - final_cs * exp_parent)
