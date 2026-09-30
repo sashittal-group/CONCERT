@@ -2846,111 +2846,259 @@ def main13():
 
 
 
-def main14():
-    from src.plotters import plot_simulated_lineage_tree
+def read_simulation_settings(setting_file):
+    """Read the section-based settings format used by setting.txt."""
+    sections = {
+        "num states": [],
+        "states": [],
+        "birth rates": [],
+        "death rates": [],
+        "sampling rates": [],
+        "transition times": [],
+        "transition probabilities": [],
+        "simulation time horizon": [],
+        "initial state": [],
+        "num trees": [],
+    }
+    current_section = None
+
+    with open(setting_file, "r") as settings:
+        for line_number, raw_line in enumerate(settings, start=1):
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+
+            if stripped.startswith("#"):
+                heading = stripped[1:].strip().lower()
+                if heading in sections:
+                    current_section = heading
+                elif heading.startswith("transition probabilities"):
+                    current_section = "transition probabilities"
+                elif heading.startswith("transition times"):
+                    current_section = "transition times"
+                continue
+
+            content, _, inline_heading = stripped.partition("#")
+            inline_heading = inline_heading.strip().lower()
+            if inline_heading in sections:
+                current_section = inline_heading
+            elif inline_heading.startswith("transition probabilities"):
+                current_section = "transition probabilities"
+            elif inline_heading.startswith("transition times"):
+                current_section = "transition times"
+            content = content.strip()
+            if not content:
+                continue
+            if current_section is None:
+                raise ValueError(f"Missing section heading on line {line_number}")
+            sections[current_section].append((line_number, content.split()))
+
+    def one_value(section):
+        rows = sections[section]
+        if len(rows) != 1 or len(rows[0][1]) != 1:
+            raise ValueError(f"Expected one value in '{section}' section")
+        return rows[0][1][0]
+
+    try:
+        num_states = int(one_value("num states"))
+    except ValueError as error:
+        raise ValueError("'num states' must contain an integer") from error
+
+    state_rows = sections["states"]
+    if len(state_rows) != 1:
+        raise ValueError("'states' section must contain one list of state names")
+    states = state_rows[0][1]
+    if num_states != len(states) or len(set(states)) != len(states):
+        raise ValueError("'num states' must match the unique names in 'states'")
+
+    def parse_rates(section):
+        values = {}
+        for line_number, row in sections[section]:
+            if len(row) != 2 or row[0] not in states:
+                raise ValueError(f"Invalid {section} entry on line {line_number}")
+            if row[0] in values:
+                raise ValueError(f"Duplicate state in '{section}' on line {line_number}")
+            try:
+                value = float(row[1])
+            except ValueError as error:
+                raise ValueError(f"Invalid rate on line {line_number}") from error
+            if value < 0:
+                raise ValueError(f"Rates must be non-negative on line {line_number}")
+            values[row[0]] = value
+        if set(values) != set(states):
+            raise ValueError(f"'{section}' must define a value for every state")
+        return values
+
+    transition_times = {state: [] for state in states}
+    seen_time_states = set()
+    for line_number, row in sections["transition times"]:
+        if len(row) < 2 or row[0] not in states:
+            raise ValueError(f"Invalid transition-times entry on line {line_number}")
+        if row[0] in seen_time_states:
+            raise ValueError(f"Duplicate state in 'transition times' on line {line_number}")
+        seen_time_states.add(row[0])
+        try:
+            transition_times[row[0]] = [] if row[1:] == ["-"] else [float(t) for t in row[1:]]
+        except ValueError as error:
+            raise ValueError(f"Invalid transition time on line {line_number}") from error
+        if any(t < 0 for t in transition_times[row[0]]):
+            raise ValueError(f"Transition times must be non-negative on line {line_number}")
+
+    if seen_time_states != set(states):
+        raise ValueError("'transition times' must include each state; use '-' for none")
+
+    transition_probabilities = pd.DataFrame(0.0, index=states, columns=states)
+    seen_transitions = set()
+    for line_number, row in sections["transition probabilities"]:
+        if len(row) != 4 or row[0] not in states or row[1] != "->" or row[2] not in states:
+            raise ValueError(f"Invalid transition-probability entry on line {line_number}")
+        transition = (row[0], row[2])
+        if transition in seen_transitions:
+            raise ValueError(f"Duplicate transition on line {line_number}")
+        try:
+            probability = float(row[3])
+        except ValueError as error:
+            raise ValueError(f"Invalid transition probability on line {line_number}") from error
+        if not 0 <= probability <= 1:
+            raise ValueError(f"Transition probabilities must be between 0 and 1 on line {line_number}")
+        transition_probabilities.loc[transition[0], transition[1]] = probability
+        seen_transitions.add(transition)
+
+    expected_transitions = {(source, target) for source in states for target in states}
+    if seen_transitions != expected_transitions:
+        raise ValueError("'transition probabilities' must define every state-to-state pair")
+    if any(not np.isclose(transition_probabilities.loc[state].sum(), 1.0) for state in states):
+        raise ValueError("Transition probabilities for each state must sum to 1")
+
+    try:
+        time_horizon = float(one_value("simulation time horizon"))
+        num_trees = int(one_value("num trees"))
+    except ValueError as error:
+        raise ValueError("Time horizon must be numeric and 'num trees' must be an integer") from error
+    if time_horizon <= 0 or num_trees <= 0:
+        raise ValueError("Time horizon and number of trees must be positive")
+
+    root_state = one_value("initial state")
+    if root_state not in states:
+        raise ValueError("'initial state' must be one of the declared states")
+
+    for state, times in transition_times.items():
+        if times != sorted(times) or any(time > time_horizon for time in times):
+            raise ValueError(f"Transition times for {state} must be sorted and within the time horizon")
+
+    return {
+        "states": states,
+        "birth_rates": parse_rates("birth rates"),
+        "death_rates": parse_rates("death rates"),
+        "sampling_rates": parse_rates("sampling rates"),
+        "transition_times": transition_times,
+        "transition_probabilities": transition_probabilities,
+        "time_horizon": time_horizon,
+        "root_state": root_state,
+        "num_trees": num_trees,
+    }
+
+
+def simulate_from_settings(setting_file, source_seed, output_dir):
+    """Generate one main14-style tree, incrementing the seed after failures."""
+    from pathlib import Path
+
     from src.likelihood import add_node_times
+    from src.plotters import plot_simulated_lineage_tree
 
-    abp = 0.7
-    transition_times = [0.5]
-    birth_rates = [10, 9]
-    death_rates = [3, 2]
-    sampling_rates = [0.5, 0.6]
+    settings = read_simulation_settings(setting_file)
+    if source_seed < 0:
+        raise ValueError("source_seed must be non-negative")
 
-    diff_T = nx.DiGraph()
-    diff_T.add_node("A", transition_times = transition_times)
-    diff_T.add_node("B", transition_times = [])
-    diff_T.add_edge("A", "B")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    diff_probs = pd.DataFrame(
-        [
-            [1 - abp, abp],
-            [0.0, 1.0],
-        ],
-        index=["A", "B"],
-        columns=["A", "B"]
+    differentiation_times = nx.DiGraph()
+    for state in settings["states"]:
+        differentiation_times.add_node(
+            state,
+            transition_times=settings["transition_times"][state],
+        )
+        for target in settings["states"]:
+            if state != target and settings["transition_probabilities"].loc[state, target] > 0:
+                differentiation_times.add_edge(state, target)
+
+    seed = source_seed
+    while True:
+        print(f"Trying seed {seed}")
+        try:
+            graph, root = simulate_multitype_bd_with_diff(
+                birth_rates=settings["birth_rates"],
+                death_rates=settings["death_rates"],
+                sampling_rates=settings["sampling_rates"],
+                transition_probabilities=settings["transition_probabilities"],
+                differentiation_times=differentiation_times,
+                time_length=settings["time_horizon"],
+                root_state=settings["root_state"],
+                seed=seed,
+            )
+            if not any(
+                data.get("event") == "sample"
+                for _, data in graph.nodes(data=True)
+            ):
+                raise ValueError("Simulation produced no sampled extant tips")
+            break
+        except Exception as error:
+            print(f"Tree generation failed with seed {seed}: {error}")
+            seed += 1
+
+    graph = add_node_times(graph, root=root, reverse=False)
+    for _, data in graph.nodes(data=True):
+        data["T"] = max(1 - data["T"] / settings["time_horizon"], 0)
+
+    extant_graph = filter_extant_lineages(graph, root)
+    extant_graph, transitions = contract_edges(extant_graph, root)
+    export_tree(
+        extant_graph,
+        output_dir / "nodes.csv",
+        output_dir / "edges.csv",
     )
 
-    num_trees_per_setting = 1000
+    plot_simulated_lineage_tree(graph, root, show_labels=False)
+    plt.savefig(output_dir / "T.png")
+    plt.close()
 
-    for multi in range(5):
+    plot_simulated_lineage_tree(extant_graph, root, show_labels=False)
+    plt.savefig(output_dir / "T_extant.png")
+    plt.close()
 
-        for seed in range(num_trees_per_setting):
+    with open(output_dir / "transition_times.csv", "w") as transition_file:
+        print(len(transitions), file=transition_file)
+        for time, _, _, _, _ in transitions:
+            print(time, file=transition_file)
 
-            setting = f"test{multi+6+5+5}_multi"
+    with open(output_dir / "transition_times_with_edges.csv", "w") as transition_file:
+        print(len(transitions), file=transition_file)
+        for time, start_node, end_node, source, target in transitions:
+            normalized_time = 1 - time / settings["time_horizon"]
+            source_id = settings["states"].index(source)
+            target_id = settings["states"].index(target)
+            print(
+                f"{normalized_time},{start_node},{end_node},{source_id},{target_id}",
+                file=transition_file,
+            )
 
-            inc = 0
-
-            while True:
-                print(setting, seed, inc)
+    return seed
 
 
-                try:
+def main14():
+    parser = argparse.ArgumentParser(description="Generate one tree from a settings file.")
+    parser.add_argument("setting_file", help="Path to the simulator settings file")
+    parser.add_argument("source_seed", type=int, help="Seed to try first")
+    parser.add_argument("output_dir", help="Directory in which to save the tree outputs")
+    args = parser.parse_args()
 
-                    G, root = simulate_multitype_bd_with_diff(
-                        birth_rates={
-                            "A": birth_rates[0],
-                            "B": birth_rates[1],
-                        },
-                        death_rates={
-                            "A": death_rates[0],
-                            "B": death_rates[1],
-                        },
-                        sampling_rates={
-                            "A": sampling_rates[0],
-                            "B": sampling_rates[1],
-                        },
-                        transition_probabilities=diff_probs,
-                        differentiation_times=diff_T,
-                        time_length=1.0,
-                        root_state="A",
-                        seed=(multi * num_trees_per_setting + seed) * 10 + inc
-                    )
-        
-                    save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/coord_diff/{setting}"
-        
-                    os.makedirs(save_dir, exist_ok=True)
-        
-                    # print(G.nodes(data=True))
-        
-                    G = add_node_times(G)
-        
-                    print(len(G.nodes))
-        
-                    # save_tree(G, root, f"{save_dir}/T_{seed}.json")
-                    G_extant = filter_extant_lineages(G, root)
-                    G_extant, transitions = contract_edges(G_extant, root)
-        
-                    # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
-        
-                    export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-        
-        
-                    # try:
-                    plot_simulated_lineage_tree(G, root, show_labels=False)
-                    plt.savefig(f"{save_dir}/T_{seed}.png")
-                    plt.close()
-        
-                    plot_simulated_lineage_tree(G_extant, root, show_labels=False)
-                    plt.savefig(f"{save_dir}/T_extant_{seed}.png")
-                    plt.close()
-                    # except Exception as e:
-                    #     print(f"Plotting failed: {e}")
-        
-                    with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
-                        print(len(transitions), file=f, flush=True)
-                        for a, _, _, _, _ in sorted(transitions):
-                            print(a, file=f, flush=True)
-        
-                    with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
-                        print(len(transitions), file=f, flush=True)
-                        for t, e1, e2, s1, s2 in sorted(transitions):
-                            print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-        
-                    break
-
-                except Exception as e:
-
-                    inc += 1
+    successful_seed = simulate_from_settings(
+        setting_file=args.setting_file,
+        source_seed=args.source_seed,
+        output_dir=args.output_dir,
+    )
+    print(f"Generated tree using seed {successful_seed}")
 
             
 

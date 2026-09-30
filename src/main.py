@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import time
 from pathlib import Path
 
@@ -39,9 +40,12 @@ def parse_args():
     )
 
     parser.add_argument(
-        "directory",
+        "tree_path_regex",
         type=str,
-        help="Directory containing nodes_0.csv, edges_0.csv, etc.",
+        help=(
+            "Regex matching tree edge CSV paths, e.g. "
+            r"data/simulation/coord_diff/setting_0/batch_\d+/tree_\d+/edges\.csv"
+        ),
     )
 
     parser.add_argument(
@@ -135,6 +139,56 @@ def parse_args():
     )
 
     return parser.parse_args()
+
+
+def find_tree_edge_paths(path_regex: str, num_trees: int) -> list[Path]:
+    if num_trees <= 0:
+        raise ValueError("num_trees must be positive")
+
+    path_pattern = re.compile(path_regex)
+    literal_prefix = re.split(
+        r"[.^$*+?{}\[\]|()\\]",
+        path_regex.lstrip("^"),
+        maxsplit=1,
+    )[0]
+    prefix_path = Path(literal_prefix)
+    if prefix_path.is_file():
+        search_root = prefix_path.parent
+    elif prefix_path.is_dir():
+        search_root = prefix_path
+    else:
+        search_root = prefix_path.parent
+
+    while not search_root.is_dir():
+        parent = search_root.parent
+        if parent == search_root:
+            raise FileNotFoundError(
+                f"Could not find a directory root for path regex: {path_regex}"
+            )
+        search_root = parent
+
+    def numeric_path_key(path: Path):
+        return tuple(
+            int(part) if part.isdigit() else part
+            for part in re.split(r"(\d+)", str(path))
+        )
+
+    edge_paths = sorted(
+        (
+            path
+            for path in search_root.rglob("edges.csv")
+            if path_pattern.fullmatch(str(path))
+        ),
+        key=numeric_path_key,
+    )
+
+    if len(edge_paths) < num_trees:
+        raise RuntimeError(
+            f"Expected {num_trees} tree edge files matching {path_regex!r}, "
+            f"but found {len(edge_paths)}"
+        )
+
+    return edge_paths[:num_trees]
 
 
 def get_device(device_arg: str | None) -> torch.device:
@@ -302,7 +356,7 @@ def main(normalize_root_likelihood: bool | None = None):
 
     device = get_device(args.device)
 
-    print(f"dir={args.directory}")
+    print(f"tree_path_regex={args.tree_path_regex}")
 
     print(f"num_states={num_states}")
 
@@ -340,17 +394,15 @@ def main(normalize_root_likelihood: bool | None = None):
         # LOAD TREES
         # ====================================================
 
-        directory = Path(args.directory)
-
         trees = []
 
-        for i in range(num_trees):
+        edge_paths = find_tree_edge_paths(args.tree_path_regex, num_trees)
+
+        for i, edge_path in enumerate(edge_paths):
 
             tree_start = time.perf_counter()
 
-            node_path = directory / f"nodes_{i}.csv"
-
-            edge_path = directory / f"edges_{i}.csv"
+            node_path = edge_path.with_name("nodes.csv")
 
             loaded_nodes = load_nodes(str(node_path))
 
