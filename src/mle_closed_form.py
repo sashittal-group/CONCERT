@@ -160,11 +160,13 @@ class PhylodynamicParameters(nn.Module):
         initial_transition_probabilities=None,
         max_birth_rate: float = 20.0,
         max_death_rate: float = 10.0,
+        shared_sampling_rate: bool = False,
     ):
         super().__init__()
 
         self.num_states = num_states
         self.free_edges = free_edges
+        self.shared_sampling_rate = shared_sampling_rate
         self.transition_times = torch.as_tensor(
             given_transition_times,
             dtype=torch.float64,
@@ -284,7 +286,13 @@ class PhylodynamicParameters(nn.Module):
             1.0 - 1e-8,
         )
 
-        self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_sampling))
+        if shared_sampling_rate:
+            initial_shared_sampling = initial_sampling.mean().reshape(1)
+            self.sampling_raw = nn.Parameter(
+                inverse_sigmoid(initial_shared_sampling)
+            )
+        else:
+            self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_sampling))
 
         # ====================================================
         # TRANSITION PROBABILITIES
@@ -386,8 +394,10 @@ class PhylodynamicParameters(nn.Module):
     def sampling_probabilities(
         self,
     ) -> torch.Tensor:
-
-        return torch.sigmoid(self.sampling_raw)
+        probabilities = torch.sigmoid(self.sampling_raw)
+        if self.shared_sampling_rate:
+            return probabilities.expand(self.num_states)
+        return probabilities
 
     # ========================================================
     # TRANSITION PROBABILITIES
@@ -660,6 +670,7 @@ def optimize_parameters(
     lbfgs_history_size: int = 100,
     device: Optional[torch.device | str] = None,
     normalize_root_likelihood: bool = False,
+    shared_sampling_rate: bool = False,
 ):
     
     total_start = time.perf_counter()
@@ -706,6 +717,7 @@ def optimize_parameters(
         initial_sampling_probabilities=(initial_sampling_probabilities),
         initial_transition_probabilities=(initial_transition_probabilities),
         given_transition_times=(given_transition_times),
+        shared_sampling_rate=shared_sampling_rate,
     ).to(device)
     _timed_log("parameter construction", total_start, device)
 
@@ -792,7 +804,7 @@ def optimize_parameters(
     # ========================================================
 
     compile_start = time.perf_counter()
-    chunk_size = 10
+    chunk_size = 1
     compiled_models = []
 
     for start in range(0, len(trees), chunk_size):

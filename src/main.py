@@ -21,6 +21,7 @@ from src.tree_utils import prepare_tree
 from src.mle_closed_form import (
     optimize_parameters,
 )
+
 # from src.closed_form_coord import (
 #     calculate_linear_prior_for_transition_times,
 # )
@@ -40,12 +41,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "tree_path_regex",
+        "directory",
         type=str,
-        help=(
-            "Regex matching tree edge CSV paths, e.g. "
-            r"data/simulation/coord_diff/setting_0/batch_\d+/tree_\d+/edges\.csv"
-        ),
+        help="Directory containing paired nodes and edges CSV files.",
     )
 
     parser.add_argument(
@@ -57,7 +55,8 @@ def parse_args():
     parser.add_argument(
         "--num-trees",
         type=int,
-        default=1,
+        default=None,
+        help="Number of node/edge pairs to load; defaults to all complete pairs.",
     )
 
     parser.add_argument(
@@ -101,6 +100,12 @@ def parse_args():
         help="Normalize each tree likelihood by 1 - U(root time).",
     )
 
+    parser.add_argument(
+        "--shared-sampling-rate",
+        action="store_true",
+        help="Use one learned sampling probability shared by all states.",
+    )
+
     # --------------------------------------------------------
     # PyTorch-specific options
     # --------------------------------------------------------
@@ -141,54 +146,58 @@ def parse_args():
     return parser.parse_args()
 
 
-def find_tree_edge_paths(path_regex: str, num_trees: int) -> list[Path]:
-    if num_trees <= 0:
+def find_tree_file_pairs(
+    directory: str | Path, num_trees: int | None = None
+) -> list[tuple[Path, Path]]:
+    if num_trees is not None and num_trees <= 0:
         raise ValueError("num_trees must be positive")
 
-    path_pattern = re.compile(path_regex)
-    literal_prefix = re.split(
-        r"[.^$*+?{}\[\]|()\\]",
-        path_regex.lstrip("^"),
-        maxsplit=1,
-    )[0]
-    prefix_path = Path(literal_prefix)
-    if prefix_path.is_file():
-        search_root = prefix_path.parent
-    elif prefix_path.is_dir():
-        search_root = prefix_path
-    else:
-        search_root = prefix_path.parent
+    search_root = Path(directory)
+    if not search_root.is_dir():
+        raise NotADirectoryError(f"Tree input directory does not exist: {search_root}")
 
-    while not search_root.is_dir():
-        parent = search_root.parent
-        if parent == search_root:
-            raise FileNotFoundError(
-                f"Could not find a directory root for path regex: {path_regex}"
-            )
-        search_root = parent
-
-    def numeric_path_key(path: Path):
+    def natural_path_key(path: Path):
         return tuple(
             int(part) if part.isdigit() else part
-            for part in re.split(r"(\d+)", str(path))
+            for part in re.split(r"(\d+)", path.relative_to(search_root).as_posix())
         )
 
     edge_paths = sorted(
         (
             path
-            for path in search_root.rglob("edges.csv")
-            if path_pattern.fullmatch(str(path))
+            for path in search_root.rglob("*.csv")
+            if re.search(r"edges", path.name, flags=re.IGNORECASE)
         ),
-        key=numeric_path_key,
+        key=natural_path_key,
     )
 
-    if len(edge_paths) < num_trees:
+    pairs = []
+    unmatched_edges = []
+    for edge_path in edge_paths:
+        node_name, replacements = re.subn(
+            r"edges",
+            "nodes",
+            edge_path.name,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        node_path = edge_path.with_name(node_name)
+        if replacements == 1 and node_path.is_file():
+            pairs.append((node_path, edge_path))
+        else:
+            unmatched_edges.append(edge_path)
+
+    if not pairs:
+        raise RuntimeError(f"No complete nodes/edges pairs found in {search_root}")
+
+    if num_trees is not None and len(pairs) < num_trees:
+        unmatched = ", ".join(str(path) for path in unmatched_edges[:5])
         raise RuntimeError(
-            f"Expected {num_trees} tree edge files matching {path_regex!r}, "
-            f"but found {len(edge_paths)}"
+            f"Expected {num_trees} complete nodes/edges pairs in {search_root}, "
+            f"but found {len(pairs)}. Unmatched edge files: {unmatched or 'none'}"
         )
 
-    return edge_paths[:num_trees]
+    return pairs if num_trees is None else pairs[:num_trees]
 
 
 def get_device(device_arg: str | None) -> torch.device:
@@ -356,11 +365,11 @@ def main(normalize_root_likelihood: bool | None = None):
 
     device = get_device(args.device)
 
-    print(f"tree_path_regex={args.tree_path_regex}")
+    print(f"directory={args.directory}")
 
     print(f"num_states={num_states}")
 
-    print(f"num_trees={num_trees}")
+    print(f"num_trees={num_trees if num_trees is not None else 'all complete pairs'}")
 
     print(f"output={output_file}")
 
@@ -396,13 +405,11 @@ def main(normalize_root_likelihood: bool | None = None):
 
         trees = []
 
-        edge_paths = find_tree_edge_paths(args.tree_path_regex, num_trees)
+        tree_file_pairs = find_tree_file_pairs(args.directory, num_trees)
 
-        for i, edge_path in enumerate(edge_paths):
+        for i, (node_path, edge_path) in enumerate(tree_file_pairs):
 
             tree_start = time.perf_counter()
-
-            node_path = edge_path.with_name("nodes.csv")
 
             loaded_nodes = load_nodes(str(node_path))
 
@@ -452,8 +459,10 @@ def main(normalize_root_likelihood: bool | None = None):
         #     {0.5 - 1e-6, free_edges}
         # );
 
-        transition_times = [0.0, 0.5 - 1e-6]
-        
+        transition_times = [0, 1e-4, 1e-3] + [0.005 * i for i in range(1, 21)]
+
+        print(f"transition_times={transition_times}")
+
         # ====================================================
         # PRIOR
         # ====================================================
@@ -499,7 +508,6 @@ def main(normalize_root_likelihood: bool | None = None):
         initial_sampling_probabilities = None
         initial_transition_probabilities = None
 
-
         initial_transition_times = None
 
         # ====================================================
@@ -513,39 +521,6 @@ def main(normalize_root_likelihood: bool | None = None):
         #
         # given_sampling_probabilities = {0.5, 0.6};
 
-        given_sampling_probabilities = [
-            0.5,
-            0.6,
-        ]
-
-        # ====================================================
-        # VALIDATION
-        # ====================================================
-
-        if num_states != 2:
-
-            raise ValueError(
-                "The hard-coded initial transition "
-                "probabilities and given sampling "
-                "probabilities in this main file are "
-                "defined for num_states=2. "
-                "Provide generalized values before using "
-                "--num-states other than 2."
-            )
-
-        if (
-            initial_transition_probabilities
-            and len(initial_transition_probabilities) != num_states
-        ):
-            raise ValueError(
-                "initial_transition_probabilities " "has incorrect number of rows"
-            )
-
-        if (
-            given_sampling_probabilities
-            and len(given_sampling_probabilities) != num_states
-        ):
-            raise ValueError("given_sampling_probabilities " "has incorrect length")
 
         # ====================================================
         # OPTIMIZATION
@@ -570,6 +545,7 @@ def main(normalize_root_likelihood: bool | None = None):
             patience=(args.patience),
             device=device,
             normalize_root_likelihood=normalize_root_likelihood,
+            shared_sampling_rate=args.shared_sampling_rate,
         )
 
         # ====================================================
