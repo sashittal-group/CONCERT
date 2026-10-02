@@ -521,7 +521,6 @@ def main(normalize_root_likelihood: bool | None = None):
         #
         # given_sampling_probabilities = {0.5, 0.6};
 
-
         # ====================================================
         # OPTIMIZATION
         # ====================================================

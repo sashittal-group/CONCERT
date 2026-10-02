@@ -288,9 +288,7 @@ class PhylodynamicParameters(nn.Module):
 
         if shared_sampling_rate:
             initial_shared_sampling = initial_sampling.mean().reshape(1)
-            self.sampling_raw = nn.Parameter(
-                inverse_sigmoid(initial_shared_sampling)
-            )
+            self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_shared_sampling))
         else:
             self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_sampling))
 
@@ -469,7 +467,6 @@ def calculate_total_log_likelihood(
     params: PhylodynamicParameters,
     trees: list[PreparedTree],
     static_transition_times: list[float] | None = None,
-    root_time: float = 1.0,
     normalize_root_likelihood: bool = False,
 ) -> torch.Tensor:
     """
@@ -487,18 +484,18 @@ def calculate_total_log_likelihood(
     if static_transition_times is None:
         static_transition_times = transition_times.detach().cpu().tolist()
 
-
     # --------------------------------------------------------
     # U / flow_U / Cs
     # --------------------------------------------------------
 
+    root_times = [tree.time[tree.root] for tree in trees]
     U_result = calculate_Us(
         birth_rates,
         death_rates,
         sampling_probabilities,
         transition_probabilities,
         transition_times,
-        root_time=root_time,
+        root_times=root_times,
     )
 
     # print(f"U_result: {U_result}")
@@ -513,7 +510,7 @@ def calculate_total_log_likelihood(
         dtype=torch.float64,
     )
 
-    for tree in trees:
+    for tree_index, tree in enumerate(trees):
 
         result = calculate_log_likelihood_levelwise(
             tree,
@@ -527,7 +524,7 @@ def calculate_total_log_likelihood(
 
         LL = LL + result.root_loglikelihood
         if normalize_root_likelihood:
-            LL = LL - torch.log1p(-U_result.root_U[0])
+            LL = LL - torch.log1p(-U_result.root_U[tree_index, 0])
 
         # print(f"Result for tree: {result.LL}")
 
@@ -612,6 +609,7 @@ def log_iteration(
 # MAIN OPTIMIZATION FUNCTION
 # ============================================================
 
+
 class LikelihoodModel(nn.Module):
 
     def __init__(
@@ -625,9 +623,7 @@ class LikelihoodModel(nn.Module):
         self.params = params
         self.trees = trees
         self.normalize_root_likelihood = normalize_root_likelihood
-        self.static_transition_times = (
-            params.transition_times.detach().cpu().tolist()
-        )
+        self.static_transition_times = params.transition_times.detach().cpu().tolist()
 
     def forward(self):
 
@@ -672,7 +668,7 @@ def optimize_parameters(
     normalize_root_likelihood: bool = False,
     shared_sampling_rate: bool = False,
 ):
-    
+
     total_start = time.perf_counter()
 
     # ========================================================
@@ -810,7 +806,7 @@ def optimize_parameters(
     for start in range(0, len(trees), chunk_size):
         chunk_model = LikelihoodModel(
             params=params,
-            trees=trees[start:start + chunk_size],
+            trees=trees[start : start + chunk_size],
             normalize_root_likelihood=normalize_root_likelihood,
         )
         compiled_models.append(

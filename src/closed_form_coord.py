@@ -36,44 +36,29 @@ def calculate_Us(
     sampling_probabilities: torch.Tensor,
     transition_probabilities: torch.Tensor,
     transition_times: torch.Tensor,
-    root_time: float = 1.0,
+    root_times: Sequence[float] | torch.Tensor,
 ) -> UResult:
-
     if birth_rates.ndim != 1:
         raise ValueError("birth_rates must have shape (num_states,)")
-
     if death_rates.shape != birth_rates.shape:
-        raise ValueError("death_rates must have the same shape as " "birth_rates")
-
+        raise ValueError("death_rates must have the same shape as birth_rates")
     if sampling_probabilities.shape != birth_rates.shape:
-        raise ValueError("sampling_probabilities must have shape " "(num_states,)")
+        raise ValueError("sampling_probabilities must have shape (num_states,)")
 
     num_steps = len(transition_times)
-
     if num_steps == 0:
         raise ValueError("transition_times cannot be empty")
 
-    evaluation_times = torch.cat(
-        (transition_times, transition_times.new_tensor([root_time]))
+    root_times = torch.as_tensor(
+        root_times,
+        dtype=birth_rates.dtype,
+        device=birth_rates.device,
     )
-
-    # --------------------------------------------------------
-    # U[0,:] = 1 - rho
-    #
-    # C[0,:] =
-    #
-    #     (U[0] - mu/lambda)
-    #     ------------------
-    #         U[0] - 1
-    # --------------------------------------------------------
+    if root_times.ndim != 1 or root_times.numel() == 0:
+        raise ValueError("root_times must be a non-empty one-dimensional sequence")
 
     U0 = 1.0 - sampling_probabilities
-
-    numerator = U0 - death_rates / birth_rates
-
-    denominator = U0 - 1.0
-
-    C0 = numerator / denominator
+    C0 = (U0 - death_rates / birth_rates) / (U0 - 1.0)
 
     # --------------------------------------------------------
     # Store tensors in Python lists.
@@ -90,69 +75,18 @@ def calculate_Us(
     C_values = [C0]
 
     # --------------------------------------------------------
-    # Epoch recursion
-    # --------------------------------------------------------
-
-    for n in range(1, len(evaluation_times)):
-
-        prev_time = evaluation_times[n - 1]
-        time = evaluation_times[n]
-
-        dt = time - prev_time
-
-        r = birth_rates - death_rates
-
-        # ----------------------------------------------------
-        # Continuous propagation
-        #
-        # flow_U[n,s] =
-        #
-        # 1 -
-        # (lambda_s - mu_s)
-        # --------------------------
-        # lambda_s *
-        # [1 - C[n-1,s] exp(-r_s dt)]
-        # ----------------------------------------------------
-
-        exponential = torch.exp(-r * dt)
-
+    # Calculate U and C at each transition epoch.
+    rates = birth_rates - death_rates
+    for n in range(1, num_steps):
+        dt = transition_times[n] - transition_times[n - 1]
+        exponential = torch.exp(-rates * dt)
         denominator = 1.0 - C_values[n - 1] * exponential
-
-        flow_U_n = 1.0 - r / (birth_rates * denominator)
-
-        # ----------------------------------------------------
-        # State transition
-        #
-        # U[n,s] =
-        #     sum_j Q[s,j] flow_U[n,j]
-        #
-        # U[n] = Q @ flow_U[n]
-        # ----------------------------------------------------
-
-        if n == num_steps:
-            root_U = flow_U_n
-            continue
-
+        flow_U_n = 1.0 - rates / (birth_rates * denominator)
         U_n = transition_probabilities @ flow_U_n
-
-        # ----------------------------------------------------
-        # C[n]
-        # ----------------------------------------------------
-
-        numerator = U_n - death_rates / birth_rates
-
-        denominator = U_n - 1.0
-
-        C_n = numerator / denominator
-
-        # ----------------------------------------------------
-        # Append new tensors.
-        # ----------------------------------------------------
+        C_n = (U_n - death_rates / birth_rates) / (U_n - 1.0)
 
         flow_U_values.append(flow_U_n)
-
         U_values.append(U_n)
-
         C_values.append(C_n)
 
     # --------------------------------------------------------
@@ -172,6 +106,22 @@ def calculate_Us(
     Cs = torch.stack(
         C_values,
         dim=0,
+    )
+
+    epoch_indices = (
+        (root_times[:, None] >= transition_times[None, :])
+        .to(torch.long)
+        .sum(dim=1)
+        .sub(1)
+        .clamp(min=0, max=num_steps - 1)
+    )
+    root_epoch_times = transition_times[epoch_indices]
+    root_epoch_Cs = Cs[epoch_indices]
+    root_exponential = torch.exp(
+        -rates[None, :] * (root_times[:, None] - root_epoch_times[:, None])
+    )
+    root_U = 1.0 - rates[None, :] / (
+        birth_rates[None, :] * (1.0 - root_epoch_Cs * root_exponential)
     )
 
     return UResult(

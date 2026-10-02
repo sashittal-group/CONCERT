@@ -84,11 +84,7 @@ def build_levels(
 
     while current:
         levels.append(current)
-        current = [
-            child
-            for node_id in current
-            for child in children[node_id]
-        ]
+        current = [child for node_id in current for child in children[node_id]]
 
     return list(reversed(levels))
 

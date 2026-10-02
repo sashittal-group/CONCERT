@@ -9,6 +9,7 @@ import torch
 # RAW INPUT STRUCTURES
 # ============================================================
 
+
 @dataclass
 class Node:
     id: int
@@ -27,6 +28,7 @@ class Edge:
 # ============================================================
 # PREPARED TREE
 # ============================================================
+
 
 @dataclass
 class PreparedTree:
@@ -90,6 +92,7 @@ class PreparedTree:
 # LIKELIHOOD OUTPUT
 # ============================================================
 
+
 @dataclass
 class LikelihoodResult:
     """
@@ -101,10 +104,10 @@ class LikelihoodResult:
     LL: torch.Tensor
 
 
-
 # ============================================================
 # U CALCULATIONS
 # ============================================================
+
 
 @dataclass
 class UResult:
@@ -119,6 +122,9 @@ class UResult:
 
     Cs:
         (num_epochs, num_states)
+
+    root_U:
+        (num_trees, num_states)
     """
 
     U: torch.Tensor
@@ -130,6 +136,7 @@ class UResult:
 # ============================================================
 # OPTIMIZATION OUTPUT
 # ============================================================
+
 
 @dataclass
 class OptimizationResult:
@@ -146,6 +153,7 @@ class OptimizationResult:
 # ============================================================
 # DEVICE HELPERS
 # ============================================================
+
 
 def get_device():
     if torch.cuda.is_available():

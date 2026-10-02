@@ -15,6 +15,7 @@ STATE_TO_ID = {
     "NS": 10,
 }
 
+
 def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
     # --- write nodes ---
     with open(node_file, "w", newline="") as f:
@@ -33,12 +34,7 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
                 # sid = STATE_TO_ID[state]
                 sid = state
 
-            writer.writerow([
-                n,
-                float(data["T"]),
-                int(data.get("is_leaf", False)),
-                sid
-            ])
+            writer.writerow([n, float(data["T"]), int(data.get("is_leaf", False)), sid])
 
     # --- write edges ---
     with open(edge_file, "w", newline="") as f:
@@ -46,20 +42,15 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
         writer.writerow(["parent", "child", "branch_length"])
 
         for u, v, data in T.edges(data=True):
-            writer.writerow([
-                u,
-                v,
-                float(data.get("length", 0.0))
-            ])
-
+            writer.writerow([u, v, float(data.get("length", 0.0))])
 
 
 def export_diff_T(
     G,
-    id_map,                     # dict: old_id -> new_id (partial)
+    id_map,  # dict: old_id -> new_id (partial)
     node_file="nodes.csv",
     edge_file="edges.csv",
-    start_id=0                  # where to start incremental IDs
+    start_id=0,  # where to start incremental IDs
 ):
     """
     Export graph to CSV while remapping node IDs:
@@ -132,6 +123,7 @@ from src.dtos import (
 # LOAD NODES
 # ============================================================
 
+
 def load_nodes(file: str) -> list[Node]:
 
     print("LOADING NODES ...")
@@ -147,9 +139,7 @@ def load_nodes(file: str) -> list[Node]:
 
     for col in required:
         if col not in df.columns:
-            raise RuntimeError(
-                f"Missing column '{col}' in {file}"
-            )
+            raise RuntimeError(f"Missing column '{col}' in {file}")
 
     nodes = [
         Node(
@@ -170,6 +160,7 @@ def load_nodes(file: str) -> list[Node]:
 # LOAD EDGES
 # ============================================================
 
+
 def load_edges(file: str) -> list[Edge]:
 
     print("LOADING EDGES ...")
@@ -185,9 +176,7 @@ def load_edges(file: str) -> list[Edge]:
 
     for col in required:
         if col not in df.columns:
-            raise RuntimeError(
-                f"Missing column '{col}' in {file}"
-            )
+            raise RuntimeError(f"Missing column '{col}' in {file}")
 
     edges = [
         Edge(
@@ -213,6 +202,5 @@ def load_transition_times(file: str) -> pd.DataFrame:
         raise RuntimeError(f"Failed to open file: {file}")
 
     df = pd.read_csv(file)
-
 
     return df

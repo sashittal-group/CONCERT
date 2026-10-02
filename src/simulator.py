@@ -64,13 +64,7 @@ def simulate_constant_bd(lam, mu, time_length, seed=None):
                 c = next_node
                 next_node += 1
                 G.add_node(c, time=None, event=None)
-                G.add_edge(
-                    tip,
-                    c,
-                    start_time=t,
-                    end_time=None,
-                    length=None
-                )
+                G.add_edge(tip, c, start_time=t, end_time=None, length=None)
                 alive.append((tip, c))
 
         else:
@@ -87,7 +81,9 @@ def simulate_constant_bd(lam, mu, time_length, seed=None):
         G.nodes[tip]["event"] = "sample"
 
         G.edges[parent, tip]["end_time"] = time_length
-        G.edges[parent, tip]["length"] = time_length - G.edges[parent, tip]["start_time"]
+        G.edges[parent, tip]["length"] = (
+            time_length - G.edges[parent, tip]["start_time"]
+        )
 
     return G, root
 
@@ -100,7 +96,7 @@ def simulate_multitype_bd_with_diff(
     differentiation_times,
     time_length,
     root_state="A",
-    seed=None
+    seed=None,
 ):
     if seed is not None:
         random.seed(seed)
@@ -148,7 +144,7 @@ def simulate_multitype_bd_with_diff(
             for transition_time in transition_times:
                 if transition_time > t and transition_time < t_transition:
                     t_transition = transition_time
-            
+
         # ---- determine next event ----
         if t_bd < t_transition and t_bd < time_length:
             # ===== Birth or Death =====
@@ -168,7 +164,9 @@ def simulate_multitype_bd_with_diff(
             G.edges[parent, tip]["end_time"] = t
             G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
 
-            if random.random() < birth_rates[state] / (birth_rates[state] + death_rates[state]):
+            if random.random() < birth_rates[state] / (
+                birth_rates[state] + death_rates[state]
+            ):
                 # birth
                 G.nodes[tip]["event"] = "birth"
 
@@ -196,7 +194,7 @@ def simulate_multitype_bd_with_diff(
                 G.edges[parent, tip]["end_time"] = t
                 G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
 
-                next_states = list(differentiation_times.successors(state))  + [state]
+                next_states = list(differentiation_times.successors(state)) + [state]
 
                 # Extract probabilities for allowed children
                 probs = (
@@ -240,18 +238,12 @@ def simulate_multitype_bd_with_diff(
             G.nodes[tip]["event"] = "sample"
         else:
             G.nodes[tip]["event"] = "unsampled"
-    
+
     return G, root
 
 
 def simulate_multitype_bd_ctmc(
-    birth_rates,
-    death_rates,
-    sampling_rates,
-    Q,
-    T,
-    root_state="A",
-    seed=None
+    birth_rates, death_rates, sampling_rates, Q, T, root_state="A", seed=None
 ):
     if seed is not None:
         random.seed(seed)
@@ -264,30 +256,14 @@ def simulate_multitype_bd_ctmc(
     root = next_node
     next_node += 1
 
-    G.add_node(
-        root,
-        time=0.0,
-        event="root",
-        state=root_state
-    )
+    G.add_node(root, time=0.0, event="root", state=root_state)
 
     child = next_node
     next_node += 1
 
-    G.add_node(
-        child,
-        time=None,
-        event=None,
-        state=root_state
-    )
+    G.add_node(child, time=None, event=None, state=root_state)
 
-    G.add_edge(
-        root,
-        child,
-        start_time=0.0,
-        end_time=None,
-        length=None
-    )
+    G.add_edge(root, child, start_time=0.0, end_time=None, length=None)
 
     alive = [(root, child, root_state)]
 
@@ -302,11 +278,7 @@ def simulate_multitype_bd_ctmc(
 
             q_out = float(Q.loc[state].sum())
 
-            r = (
-                birth_rates[state]
-                + death_rates[state]
-                + q_out
-            )
+            r = birth_rates[state] + death_rates[state] + q_out
 
             lineage_rates.append(r)
             total_rate += r
@@ -314,9 +286,7 @@ def simulate_multitype_bd_ctmc(
         if total_rate == 0:
             break
 
-        dt = np.random.exponential(
-            1.0 / total_rate
-        )
+        dt = np.random.exponential(1.0 / total_rate)
 
         if t + dt >= T:
             break
@@ -342,9 +312,7 @@ def simulate_multitype_bd_ctmc(
         mu = death_rates[state]
 
         transitions = {
-            d: float(Q.loc[state, d])
-            for d in Q.columns
-            if float(Q.loc[state, d]) > 0
+            d: float(Q.loc[state, d]) for d in Q.columns if float(Q.loc[state, d]) > 0
         }
 
         event_rates = [lam, mu]
@@ -362,10 +330,7 @@ def simulate_multitype_bd_ctmc(
 
         chosen_event = None
 
-        for rate, label in zip(
-            event_rates,
-            event_labels
-        ):
+        for rate, label in zip(event_rates, event_labels):
             cumulative += rate
 
             if u <= cumulative:
@@ -376,7 +341,7 @@ def simulate_multitype_bd_ctmc(
 
         G.nodes[tip]["time"] = t
         G.edges[parent, tip]["end_time"] = t
-        G.edges[parent, tip]["length"] = (t - G.edges[parent, tip]["start_time"])
+        G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
 
         if chosen_event == "birth":
 
@@ -387,24 +352,11 @@ def simulate_multitype_bd_ctmc(
                 c = next_node
                 next_node += 1
 
-                G.add_node(
-                    c,
-                    time=None,
-                    event=None,
-                    state=state
-                )
+                G.add_node(c, time=None, event=None, state=state)
 
-                G.add_edge(
-                    tip,
-                    c,
-                    start_time=t,
-                    end_time=None,
-                    length=None
-                )
+                G.add_edge(tip, c, start_time=t, end_time=None, length=None)
 
-                alive.append(
-                    (tip, c, state)
-                )
+                alive.append((tip, c, state))
 
         elif chosen_event == "death":
 
@@ -419,24 +371,11 @@ def simulate_multitype_bd_ctmc(
             c = next_node
             next_node += 1
 
-            G.add_node(
-                c,
-                time=None,
-                event=None,
-                state=new_state
-            )
+            G.add_node(c, time=None, event=None, state=new_state)
 
-            G.add_edge(
-                tip,
-                c,
-                start_time=t,
-                end_time=None,
-                length=None
-            )
+            G.add_edge(tip, c, start_time=t, end_time=None, length=None)
 
-            alive.append(
-                (tip, c, new_state)
-            )
+            alive.append((tip, c, new_state))
 
     # truncate surviving branches
 
@@ -445,27 +384,18 @@ def simulate_multitype_bd_ctmc(
         G.nodes[tip]["time"] = T
 
         G.edges[parent, tip]["end_time"] = T
-        G.edges[parent, tip]["length"] = (
-            T - G.edges[parent, tip]["start_time"]
-        )
+        G.edges[parent, tip]["length"] = T - G.edges[parent, tip]["start_time"]
 
         if np.random.random() < sampling_rates[state]:
             G.nodes[tip]["event"] = "sample"
         else:
             G.nodes[tip]["event"] = "unsampled"
 
-
     return G, root
 
 
 def simulate_multitype_bd_ctmc2(
-    birth_rates,
-    death_rates,
-    sampling_rates,
-    Q,
-    T,
-    root_state="A",
-    seed=None
+    birth_rates, death_rates, sampling_rates, Q, T, root_state="A", seed=None
 ):
     if seed is not None:
         random.seed(seed)
@@ -479,23 +409,13 @@ def simulate_multitype_bd_ctmc2(
     root = next_node
     next_node += 1
 
-    G.add_node(
-        root,
-        time=0.0,
-        event="root",
-        state=root_state
-    )
+    G.add_node(root, time=0.0, event="root", state=root_state)
 
     # first lineage
     child = next_node
     next_node += 1
 
-    G.add_node(
-        child,
-        time=None,
-        event=None,
-        state=root_state
-    )
+    G.add_node(child, time=None, event=None, state=root_state)
 
     G.add_edge(
         root,
@@ -505,61 +425,43 @@ def simulate_multitype_bd_ctmc2(
         length=None,
         start_state=root_state,
         end_state=root_state,
-        transitions=[]
+        transitions=[],
     )
 
     # alive lineages:
     # (parent node, current node, current state)
-    alive = [
-        (root, child, root_state)
-    ]
+    alive = [(root, child, root_state)]
 
     t = 0.0
-
 
     while alive and t < T:
 
         lineage_rates = []
         total_rate = 0.0
 
-
         # calculate total event rate
         for parent, tip, state in alive:
 
             q_out = float(Q.loc[state].sum())
 
-            r = (
-                birth_rates[state]
-                + death_rates[state]
-                + q_out
-            )
+            r = birth_rates[state] + death_rates[state] + q_out
 
             lineage_rates.append(r)
             total_rate += r
 
-
         if total_rate == 0:
             break
 
-
-        dt = np.random.exponential(
-            1.0 / total_rate
-        )
-
+        dt = np.random.exponential(1.0 / total_rate)
 
         if t + dt >= T:
             break
 
-
         t += dt
-
 
         # choose lineage experiencing event
 
-        r = np.random.uniform(
-            0,
-            total_rate
-        )
+        r = np.random.uniform(0, total_rate)
 
         cumulative = 0.0
 
@@ -573,68 +475,42 @@ def simulate_multitype_bd_ctmc2(
                 chosen = idx
                 break
 
-
         parent, tip, state = alive.pop(chosen)
-
 
         # choose event on lineage
 
         lam = birth_rates[state]
         mu = death_rates[state]
 
-
         transitions = {
-            d: float(Q.loc[state, d])
-            for d in Q.columns
-            if float(Q.loc[state, d]) > 0
+            d: float(Q.loc[state, d]) for d in Q.columns if float(Q.loc[state, d]) > 0
         }
 
+        event_rates = [lam, mu]
 
-        event_rates = [
-            lam,
-            mu
-        ]
-
-        event_labels = [
-            "birth",
-            "death"
-        ]
-
+        event_labels = ["birth", "death"]
 
         for d, q in transitions.items():
 
             event_rates.append(q)
 
-            event_labels.append(
-                ("transition", d)
-            )
-
+            event_labels.append(("transition", d))
 
         total = sum(event_rates)
 
-
-        u = np.random.uniform(
-            0,
-            total
-        )
+        u = np.random.uniform(0, total)
 
         cumulative = 0.0
 
         chosen_event = None
 
-
-        for rate, label in zip(
-            event_rates,
-            event_labels
-        ):
+        for rate, label in zip(event_rates, event_labels):
 
             cumulative += rate
 
             if u <= cumulative:
                 chosen_event = label
                 break
-
-
 
         # ----------------------------------------------------
         # close branch if birth/death
@@ -646,15 +522,11 @@ def simulate_multitype_bd_ctmc2(
             edge = G.edges[parent, tip]
 
             edge["end_time"] = t
-            edge["length"] = (
-                t - edge["start_time"]
-            )
+            edge["length"] = t - edge["start_time"]
             edge["end_state"] = state
-
 
             G.nodes[tip]["time"] = t
             G.nodes[tip]["event"] = "birth"
-
 
             # create two descendant lineages
 
@@ -663,14 +535,7 @@ def simulate_multitype_bd_ctmc2(
                 c = next_node
                 next_node += 1
 
-
-                G.add_node(
-                    c,
-                    time=None,
-                    event=None,
-                    state=state
-                )
-
+                G.add_node(c, time=None, event=None, state=state)
 
                 G.add_edge(
                     tip,
@@ -680,35 +545,21 @@ def simulate_multitype_bd_ctmc2(
                     length=None,
                     start_state=state,
                     end_state=state,
-                    transitions=[]
+                    transitions=[],
                 )
 
-
-                alive.append(
-                    (
-                        tip,
-                        c,
-                        state
-                    )
-                )
-
-
+                alive.append((tip, c, state))
 
         elif chosen_event == "death":
 
             edge = G.edges[parent, tip]
 
             edge["end_time"] = t
-            edge["length"] = (
-                t - edge["start_time"]
-            )
+            edge["length"] = t - edge["start_time"]
             edge["end_state"] = state
-
 
             G.nodes[tip]["time"] = t
             G.nodes[tip]["event"] = "death"
-
-
 
         else:
 
@@ -719,32 +570,14 @@ def simulate_multitype_bd_ctmc2(
 
             _, new_state = chosen_event
 
-
             edge = G.edges[parent, tip]
 
-
-            edge["transitions"].append(
-                {
-                    "time": t,
-                    "from": state,
-                    "to": new_state
-                }
-            )
-
+            edge["transitions"].append({"time": t, "from": state, "to": new_state})
 
             edge["end_state"] = new_state
 
-
             # update current state
-            alive.append(
-                (
-                    parent,
-                    tip,
-                    new_state
-                )
-            )
-
-
+            alive.append((parent, tip, new_state))
 
     # ----------------------------------------------------
     # truncate remaining lineages at T
@@ -754,18 +587,13 @@ def simulate_multitype_bd_ctmc2(
 
         edge = G.edges[parent, tip]
 
-
         edge["end_time"] = T
 
-        edge["length"] = (
-            T - edge["start_time"]
-        )
+        edge["length"] = T - edge["start_time"]
 
         edge["end_state"] = state
 
-
         G.nodes[tip]["time"] = T
-
 
         if np.random.random() < sampling_rates[state]:
 
@@ -775,9 +603,8 @@ def simulate_multitype_bd_ctmc2(
 
             G.nodes[tip]["event"] = "unsampled"
 
-
-
     return G, root
+
 
 import random
 import numpy as np
@@ -817,10 +644,7 @@ def get_active_transitions(
 
         active = False
 
-        for start, end in transition_windows.get(
-            (state, dest),
-            []
-        ):
+        for start, end in transition_windows.get((state, dest), []):
             if start <= t < end:
                 active = True
                 break
@@ -849,18 +673,10 @@ def next_rate_change(
         for start, end in windows:
 
             if start > t:
-                boundary = (
-                    start
-                    if boundary is None
-                    else min(boundary, start)
-                )
+                boundary = start if boundary is None else min(boundary, start)
 
             if end > t:
-                boundary = (
-                    end
-                    if boundary is None
-                    else min(boundary, end)
-                )
+                boundary = end if boundary is None else min(boundary, end)
 
     return boundary
 
@@ -877,9 +693,7 @@ def close_branch(
 
     G.nodes[tip]["time"] = t
     G.edges[parent, tip]["end_time"] = t
-    G.edges[parent, tip]["length"] = (
-        t - G.edges[parent, tip]["start_time"]
-    )
+    G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
 
 
 def simulate_multitype_bdt_ctmc_window(
@@ -958,9 +772,7 @@ def simulate_multitype_bdt_ctmc_window(
         length=None,
     )
 
-    alive = [
-        (root, first, root_state)
-    ]
+    alive = [(root, first, root_state)]
 
     t = 0.0
 
@@ -977,13 +789,9 @@ def simulate_multitype_bdt_ctmc_window(
             state,
         ) in enumerate(alive):
 
-            lam = float(
-                birth_rates[state]
-            )
+            lam = float(birth_rates[state])
 
-            mu = float(
-                death_rates[state]
-            )
+            mu = float(death_rates[state])
 
             if lam > 0:
                 events.append(
@@ -1020,10 +828,7 @@ def simulate_multitype_bdt_ctmc_window(
                     )
                 )
 
-        total_rate = sum(
-            rate
-            for _, _, rate in events
-        )
+        total_rate = sum(rate for _, _, rate in events)
 
         if total_rate <= 0:
             break
@@ -1031,9 +836,7 @@ def simulate_multitype_bdt_ctmc_window(
         #
         # Draw waiting time
         #
-        dt = np.random.exponential(
-            1.0 / total_rate
-        )
+        dt = np.random.exponential(1.0 / total_rate)
 
         boundary = next_rate_change(
             t,
@@ -1044,10 +847,7 @@ def simulate_multitype_bdt_ctmc_window(
         # If rate structure changes first,
         # move to boundary and restart.
         #
-        if (
-            boundary is not None
-            and t + dt >= boundary
-        ):
+        if boundary is not None and t + dt >= boundary:
             t = boundary
             continue
 
@@ -1081,9 +881,7 @@ def simulate_multitype_bdt_ctmc_window(
 
         lineage_idx, event_type, _ = chosen_event
 
-        parent, tip, state = alive.pop(
-            lineage_idx
-        )
+        parent, tip, state = alive.pop(lineage_idx)
 
         close_branch(
             G,
@@ -1181,13 +979,12 @@ def simulate_multitype_bdt_ctmc_window(
             T,
         )
 
-        if (np.random.random() < sampling_rates[state]):
+        if np.random.random() < sampling_rates[state]:
             G.nodes[tip]["event"] = "sample"
         else:
             G.nodes[tip]["event"] = "unsampled"
 
     return G, root
-
 
 
 def filter_extant_lineages(G, root):
@@ -1294,11 +1091,7 @@ def contract_edges(G, root):
                 c = next(G.successors(current))
 
                 transitions.append(
-                    (
-                        G.nodes[current]["time"],
-                        G.nodes[p]["state"],
-                        G.nodes[c]["state"]
-                    )
+                    (G.nodes[current]["time"], G.nodes[p]["state"], G.nodes[c]["state"])
                 )
 
             children = list(G.successors(current))
@@ -1314,8 +1107,7 @@ def contract_edges(G, root):
 
         for child in G.successors(u):
 
-            target, transitions, start_time = \
-                walk_path(u, child)
+            target, transitions, start_time = walk_path(u, child)
 
             end_time = G.nodes[target]["time"]
 
@@ -1325,20 +1117,12 @@ def contract_edges(G, root):
                 start_time=start_time,
                 end_time=end_time,
                 length=end_time - start_time,
-                transitions=transitions
+                transitions=transitions,
             )
 
             for time, s1, s2 in transitions:
 
-                transitions_list.append(
-                    (
-                        time,
-                        u,
-                        target,
-                        s1,
-                        s2
-                    )
-                )
+                transitions_list.append((time, u, target, s1, s2))
 
     transitions_list.sort(key=lambda x: x[0])
 
@@ -1538,10 +1322,10 @@ def contract_edges(G, root):
 
 #                     for child in children_dict[(v, c)]:
 #                         parent_dict[child] = (parent, c)
-                    
+
 #                     children_dict[(parent, c)].extend(children_dict[(parent, v)])
 #                     children_dict[(parent, c)].extend(children_dict[(v, c)])
-    
+
 #             H.remove_edge(v, c)
 #             H.remove_node(v)
 
@@ -1552,7 +1336,7 @@ def contract_edges(G, root):
 #             updated_transitions_list.append((time, new_p, new_c, s1, s2))
 #         else:
 #             updated_transitions_list.append((time, p, c, s1, s2))
-                
+
 
 #     return H, updated_transitions_list
 
@@ -1562,10 +1346,7 @@ def save_tree(G, root, filename):
     Save a birth–death tree with all node/edge attributes to a JSON file.
     """
 
-    data = {
-        "root": root,
-        "graph": json_graph.node_link_data(G)
-    }
+    data = {"root": root, "graph": json_graph.node_link_data(G)}
 
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
@@ -1585,7 +1366,6 @@ def load_tree(filename):
     return G, root
 
 
-
 def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
     # --- write nodes ---
     with open(node_file, "w", newline="") as f:
@@ -1600,15 +1380,10 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
             if not is_leaf or state is None or state == "?":
                 sid = -1
             else:
-                sid = ord(state) - ord('A')
+                sid = ord(state) - ord("A")
 
             # print(n, data)
-            writer.writerow([
-                n,
-                float(data["T"]),
-                int(is_leaf),
-                sid
-            ])
+            writer.writerow([n, float(data["T"]), int(is_leaf), sid])
 
     # --- write edges ---
     with open(edge_file, "w", newline="") as f:
@@ -1616,22 +1391,17 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
         writer.writerow(["parent", "child", "branch_length"])
 
         for u, v, data in T.edges(data=True):
-            writer.writerow([
-                u,
-                v,
-                float(data.get("length", 0.0))
-            ])
-
+            writer.writerow([u, v, float(data.get("length", 0.0))])
 
 
 def main2():
     from src.plotters import plot_simulated_lineage_tree
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-s', type=int, help='seed [0]', default = 0)
-    parser.add_argument('-o', type=str, help='output prefix', default='sample')
+    parser.add_argument("-s", type=int, help="seed [0]", default=0)
+    parser.add_argument("-o", type=str, help="output prefix", default="sample")
 
-    args = parser.parse_args(None if sys.argv[1:] else ['-h'])
+    args = parser.parse_args(None if sys.argv[1:] else ["-h"])
 
     save_dir = args.o
     seed = args.s
@@ -1646,7 +1416,7 @@ def main2():
     diff_T = nx.DiGraph()
 
     for i, t in enumerate(diff_times):
-        diff_T.add_node(string.ascii_uppercase[i], diff_time = t)
+        diff_T.add_node(string.ascii_uppercase[i], diff_time=t)
 
     for s, e in diff_map_edges:
         diff_T.add_edge(s, e)
@@ -1678,17 +1448,16 @@ def main2():
         transition_probabilities=Qs,
         time_length=1.0,
         root_state="A",
-        seed=seed
+        seed=seed,
     )
 
     os.makedirs(save_dir, exist_ok=True)
 
     print(G.nodes(data=True))
-   
+
     save_tree(G, root, f"{save_dir}/T.json")
     G_extant = filter_extant_lineages(G, root)
     save_tree(G_extant, root, f"{save_dir}/T_reconstructed.json")
-
 
     try:
         plot_simulated_lineage_tree(G, root)
@@ -1700,7 +1469,6 @@ def main2():
         plt.close()
     except Exception as e:
         print(f"Plotting failed: {e}")
-
 
 
 def main3():
@@ -1728,12 +1496,12 @@ def main3():
                 [0.0, 0.0, 0.8],
                 [0.0, 0.0, 0.0],
             ],
-            index=["A","B","C"],
-            columns=["A","B","C"]
+            index=["A", "B", "C"],
+            columns=["A", "B", "C"],
         ),
         T=1.0,
         root_state="A",
-        seed=0
+        seed=0,
     )
 
     save_dir = "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/0"
@@ -1741,13 +1509,12 @@ def main3():
     os.makedirs(save_dir, exist_ok=True)
 
     print(G.nodes(data=True))
-   
+
     save_tree(G, root, f"{save_dir}/T.json")
     G_extant = filter_extant_lineages(G, root)
     save_tree(G_extant, root, f"{save_dir}/T_extant.json")
 
     export_tree(G_extant, f"{save_dir}/nodes.csv", f"{save_dir}/edges.csv")
-
 
     try:
         plot_simulated_lineage_tree(G, root)
@@ -1786,31 +1553,32 @@ def main4():
                 [0.0, 0.0, 3.2],
                 [0.0, 0.0, 0.0],
             ],
-            index=["A","B","C"],
-            columns=["A","B","C"]
+            index=["A", "B", "C"],
+            columns=["A", "B", "C"],
         ),
-        transition_windows = {
+        transition_windows={
             ("A", "B"): [(0.55, 0.7)],
             ("A", "C"): [(0.55, 0.7)],
             ("B", "C"): [(0.7, 0.9)],
         },
         T=1.0,
         root_state="A",
-        seed=0
+        seed=0,
     )
 
-    save_dir = "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc_window/0"
+    save_dir = (
+        "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc_window/0"
+    )
 
     os.makedirs(save_dir, exist_ok=True)
 
     print(G.nodes(data=True))
-   
+
     save_tree(G, root, f"{save_dir}/T.json")
     G_extant = filter_extant_lineages(G, root)
     save_tree(G_extant, root, f"{save_dir}/T_extant.json")
 
     export_tree(G_extant, f"{save_dir}/nodes.csv", f"{save_dir}/edges.csv")
-
 
     try:
         plot_simulated_lineage_tree(G, root)
@@ -1830,18 +1598,35 @@ def main5():
 
     num_setting = 0
 
-    with open(f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/settings.csv", "w") as f:
+    with open(
+        f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/settings.csv",
+        "w",
+    ) as f:
 
-        print("setting,birth(A),birth(B),birth(C),transition(A>B),transition(B>C)", file=f, flush=True)
+        print(
+            "setting,birth(A),birth(B),birth(C),transition(A>B),transition(B>C)",
+            file=f,
+            flush=True,
+        )
 
         for ba in [4, 5, 6, 7, 8]:
             for bb in [4, 5, 6, 7, 8]:
                 for bc in [4, 5, 6, 7, 8]:
                     for abt in [1, 2, 4]:
                         for bct in [1, 2, 4]:
-                            print(num_setting, ba, bb, bc, abt, bct, file=f, flush=True, sep=',')
+                            print(
+                                num_setting,
+                                ba,
+                                bb,
+                                bc,
+                                abt,
+                                bct,
+                                file=f,
+                                flush=True,
+                                sep=",",
+                            )
                             # for seed in range(32):
-                                
+
                             #     print(num_setting, ba, bb, bc, abt, bct, seed, flush=True)
 
                             #     G, root = simulate_multitype_bdt_ctmc_window(
@@ -1883,9 +1668,9 @@ def main5():
                             #     os.makedirs(save_dir, exist_ok=True)
 
                             #     # print(G.nodes(data=True))
-                            
+
                             #     G = add_node_times(G)
-                            
+
                             #     # save_tree(G, root, f"{save_dir}/T_{seed}.json")
                             #     G_extant = filter_extant_lineages(G, root)
 
@@ -1910,17 +1695,20 @@ def main5():
 def main6():
     from src.plotters import plot_simulated_lineage_tree
     from src.likelihood import add_node_times
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--setting', type=int)
-    parser.add_argument('--seed', type=int)
 
-    args = parser.parse_args(None if sys.argv[1:] else ['-h'])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--setting", type=int)
+    parser.add_argument("--seed", type=int)
+
+    args = parser.parse_args(None if sys.argv[1:] else ["-h"])
 
     setting = args.setting
     seed = args.seed
 
-    df = pd.read_csv("/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/settings.csv", index_col=0)
+    df = pd.read_csv(
+        "/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/settings.csv",
+        index_col=0,
+    )
 
     row = df.loc[setting]
 
@@ -1954,19 +1742,21 @@ def main6():
                 [0.0, 0.0, bct],
                 [0.0, 0.0, 0.0],
             ],
-            index=["A","B","C"],
-            columns=["A","B","C"]
+            index=["A", "B", "C"],
+            columns=["A", "B", "C"],
         ),
-        transition_windows = {
+        transition_windows={
             ("A", "B"): [(0, 1)],
             ("B", "C"): [(0, 1)],
         },
         T=1.0,
         root_state="A",
-        seed=seed
+        seed=seed,
     )
 
-    save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
+    save_dir = (
+        f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
+    )
 
     os.makedirs(save_dir, exist_ok=True)
 
@@ -1979,7 +1769,9 @@ def main6():
 
     # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
 
-    export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
+    export_tree(
+        G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv"
+    )
 
     try:
         plot_simulated_lineage_tree(G, root)
@@ -2011,7 +1803,6 @@ def main7():
 
         print(setting)
 
-        
         G, root = simulate_multitype_bd_ctmc(
             birth_rates={
                 "A": ba,
@@ -2034,12 +1825,12 @@ def main7():
                     [0.0, 0.0, bct],
                     [0.0, 0.0, 0.0],
                 ],
-                index=["A","B","C"],
-                columns=["A","B","C"]
+                index=["A", "B", "C"],
+                columns=["A", "B", "C"],
             ),
             T=1.0,
             root_state="A",
-            seed=seed
+            seed=seed,
         )
 
         save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
@@ -2072,16 +1863,15 @@ def main7():
         # except Exception as e:
         #     print(f"Plotting failed: {e}")
 
-        with open(f'{save_dir}/transition_times.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, _, _, _, _ in sorted(transitions):
                 print(a, file=f, flush=True)
 
-        with open(f'{save_dir}/transition_times_with_edges.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_with_edges.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for t, e1, e2, s1, s2 in sorted(transitions):
                 print(f"{t},{e1},{e2},{s1},{s2}", file=f, flush=True)
-
 
 
 def main8():
@@ -2098,7 +1888,6 @@ def main8():
 
         print(setting)
 
-        
         G, root = simulate_multitype_bd_ctmc(
             birth_rates={
                 "A": ba,
@@ -2109,13 +1898,16 @@ def main8():
             sampling_rates={
                 "A": sampling_rate,
             },
-            Q=pd.DataFrame([[0.0],],
+            Q=pd.DataFrame(
+                [
+                    [0.0],
+                ],
                 index=["A"],
-                columns=["A"]
+                columns=["A"],
             ),
             T=1.0,
             root_state="A",
-            seed=seed
+            seed=seed,
         )
 
         save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
@@ -2146,10 +1938,11 @@ def main8():
         # except Exception as e:
         #     print(f"Plotting failed: {e}")
 
-        with open(f'{save_dir}/transition_times.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, _, _, _ in sorted(transitions):
                 print(a, file=f, flush=True)
+
 
 def main():
     from src.plotters import plot_simulated_lineage_tree
@@ -2167,7 +1960,6 @@ def main():
 
         print(setting)
 
-        
         G, root = simulate_multitype_bd_ctmc(
             birth_rates={
                 "A": ba,
@@ -2181,13 +1973,12 @@ def main():
                 "A": sampling_rate,
                 "B": sampling_rate,
             },
-            Q=pd.DataFrame([[0.0, abt], [0.0, 0.0]],
-                index=["A", "B"],
-                columns=["A", "B"]
+            Q=pd.DataFrame(
+                [[0.0, abt], [0.0, 0.0]], index=["A", "B"], columns=["A", "B"]
             ),
             T=1.0,
             root_state="A",
-            seed=seed
+            seed=seed,
         )
 
         save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
@@ -2217,16 +2008,15 @@ def main():
         # except Exception as e:
         #     print(f"Plotting failed: {e}")
 
-        with open(f'{save_dir}/transition_times.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, _, _, _, _ in sorted(transitions):
                 print(a, file=f, flush=True)
 
-        
-        with open(f'{save_dir}/transition_times_with_edges.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_with_edges.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, e1, e2, s1, s2 in sorted(transitions):
-                print(a, e1, e2, s1, s2, sep=',', file=f, flush=True)
+                print(a, e1, e2, s1, s2, sep=",", file=f, flush=True)
 
 
 def main9():
@@ -2247,7 +2037,6 @@ def main9():
 
         print(setting)
 
-        
         G, root = simulate_multitype_bd_ctmc(
             birth_rates={
                 "A": ba,
@@ -2270,12 +2059,12 @@ def main9():
                     [0.0, 0.0, bct],
                     [0.0, 0.0, 0.0],
                 ],
-                index=["A","B","C"],
-                columns=["A","B","C"]
+                index=["A", "B", "C"],
+                columns=["A", "B", "C"],
             ),
             T=1.0,
             root_state="A",
-            seed=seed
+            seed=seed,
         )
 
         save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
@@ -2319,17 +2108,15 @@ def main9():
         # except Exception as e:
         #     print(f"Plotting failed: {e}")
 
-        with open(f'{save_dir}/transition_times.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, _, _, _, _ in sorted(transitions):
                 print(a, file=f, flush=True)
 
-        with open(f'{save_dir}/transition_times_with_edges.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_with_edges.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for t, e1, e2, s1, s2 in sorted(transitions):
                 print(f"{t},{e1},{e2},{s1},{s2}", file=f, flush=True)
-
-
 
 
 def main10():
@@ -2343,8 +2130,8 @@ def main10():
     sampling_rate = 0.5
 
     diff_T = nx.DiGraph()
-    diff_T.add_node("A", transition_times = [transition_time])
-    diff_T.add_node("B", transition_times = [])
+    diff_T.add_node("A", transition_times=[transition_time])
+    diff_T.add_node("B", transition_times=[])
     diff_T.add_edge("A", "B")
 
     diff_probs = pd.DataFrame(
@@ -2353,9 +2140,8 @@ def main10():
             [0.0, 0.0],
         ],
         index=["A", "B"],
-        columns=["A", "B"]
+        columns=["A", "B"],
     )
-
 
     for seed in range(100):
 
@@ -2363,7 +2149,6 @@ def main10():
 
         print(setting)
 
-        
         G, root = simulate_multitype_bd_with_diff(
             birth_rates={
                 "A": ba,
@@ -2381,7 +2166,7 @@ def main10():
             differentiation_times=diff_T,
             time_length=1.0,
             root_state="A",
-            seed=seed
+            seed=seed,
         )
 
         save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
@@ -2400,8 +2185,9 @@ def main10():
 
         # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
 
-        export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-
+        export_tree(
+            G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv"
+        )
 
         # try:
         plot_simulated_lineage_tree(G, root, show_labels=False)
@@ -2414,18 +2200,19 @@ def main10():
         # except Exception as e:
         #     print(f"Plotting failed: {e}")
 
-        with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_{seed}.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, _, _, _, _ in sorted(transitions):
                 print(a, file=f, flush=True)
 
-        with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_with_edges_{seed}.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for t, e1, e2, s1, s2 in sorted(transitions):
-                print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-
-
-
+                print(
+                    f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}",
+                    file=f,
+                    flush=True,
+                )
 
 
 def main10():
@@ -2439,8 +2226,8 @@ def main10():
     sampling_rate = 0.5
 
     diff_T = nx.DiGraph()
-    diff_T.add_node("A", transition_times = [transition_time])
-    diff_T.add_node("B", transition_times = [])
+    diff_T.add_node("A", transition_times=[transition_time])
+    diff_T.add_node("B", transition_times=[])
     diff_T.add_edge("A", "B")
 
     diff_probs = pd.DataFrame(
@@ -2449,9 +2236,8 @@ def main10():
             [0.0, 0.0],
         ],
         index=["A", "B"],
-        columns=["A", "B"]
+        columns=["A", "B"],
     )
-
 
     for seed in range(100):
 
@@ -2459,7 +2245,6 @@ def main10():
 
         print(setting)
 
-        
         G, root = simulate_multitype_bd_with_diff(
             birth_rates={
                 "A": ba,
@@ -2477,7 +2262,7 @@ def main10():
             differentiation_times=diff_T,
             time_length=1.0,
             root_state="A",
-            seed=seed
+            seed=seed,
         )
 
         save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/bdt_ctmc/{setting}"
@@ -2496,8 +2281,9 @@ def main10():
 
         # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
 
-        export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-
+        export_tree(
+            G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv"
+        )
 
         # try:
         plot_simulated_lineage_tree(G, root, show_labels=False)
@@ -2510,18 +2296,19 @@ def main10():
         # except Exception as e:
         #     print(f"Plotting failed: {e}")
 
-        with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_{seed}.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for a, _, _, _, _ in sorted(transitions):
                 print(a, file=f, flush=True)
 
-        with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
+        with open(f"{save_dir}/transition_times_with_edges_{seed}.csv", "w") as f:
             print(len(transitions), file=f, flush=True)
             for t, e1, e2, s1, s2 in sorted(transitions):
-                print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-
-
-
+                print(
+                    f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}",
+                    file=f,
+                    flush=True,
+                )
 
 
 def main11():
@@ -2537,9 +2324,9 @@ def main11():
     sampling_rates = [0.5, 0.4, 0.6]
 
     diff_T = nx.DiGraph()
-    diff_T.add_node("A", transition_times = [transition_time])
-    diff_T.add_node("B", transition_times = [])
-    diff_T.add_node("C", transition_times = [])
+    diff_T.add_node("A", transition_times=[transition_time])
+    diff_T.add_node("B", transition_times=[])
+    diff_T.add_node("C", transition_times=[])
     diff_T.add_edge("A", "B")
     diff_T.add_edge("A", "C")
 
@@ -2550,7 +2337,7 @@ def main11():
             [0.0, 0.0, 1.0],
         ],
         index=["A", "B", "C"],
-        columns=["A", "B", "C"]
+        columns=["A", "B", "C"],
     )
 
     for multi in range(5):
@@ -2561,7 +2348,6 @@ def main11():
 
             print(setting)
 
-            
             G, root = simulate_multitype_bd_with_diff(
                 birth_rates={
                     "A": ba,
@@ -2582,7 +2368,7 @@ def main11():
                 differentiation_times=diff_T,
                 time_length=1.0,
                 root_state="A",
-                seed=multi * 25 + seed
+                seed=multi * 25 + seed,
             )
 
             save_dir = f"/home/samin/workspace/research/phylodynamic-CARTA/data/simulation/bdt_ctmc/{setting}"
@@ -2601,8 +2387,9 @@ def main11():
 
             # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
 
-            export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-
+            export_tree(
+                G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv"
+            )
 
             # try:
             plot_simulated_lineage_tree(G, root, show_labels=False)
@@ -2615,17 +2402,19 @@ def main11():
             # except Exception as e:
             #     print(f"Plotting failed: {e}")
 
-            with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
+            with open(f"{save_dir}/transition_times_{seed}.csv", "w") as f:
                 print(len(transitions), file=f, flush=True)
                 for a, _, _, _, _ in sorted(transitions):
                     print(a, file=f, flush=True)
 
-            with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
+            with open(f"{save_dir}/transition_times_with_edges_{seed}.csv", "w") as f:
                 print(len(transitions), file=f, flush=True)
                 for t, e1, e2, s1, s2 in sorted(transitions):
-                    print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-
-
+                    print(
+                        f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}",
+                        file=f,
+                        flush=True,
+                    )
 
 
 def main12():
@@ -2639,8 +2428,8 @@ def main12():
     sampling_rates = [0.5, 0.6]
 
     diff_T = nx.DiGraph()
-    diff_T.add_node("A", transition_times = transition_times)
-    diff_T.add_node("B", transition_times = [])
+    diff_T.add_node("A", transition_times=transition_times)
+    diff_T.add_node("B", transition_times=[])
     diff_T.add_edge("A", "B")
 
     diff_probs = pd.DataFrame(
@@ -2649,7 +2438,7 @@ def main12():
             [0.0, 1.0],
         ],
         index=["A", "B"],
-        columns=["A", "B"]
+        columns=["A", "B"],
     )
 
     num_trees_per_setting = 1000
@@ -2665,7 +2454,6 @@ def main12():
             while True:
                 print(setting, seed, inc)
 
-
                 try:
 
                     G, root = simulate_multitype_bd_with_diff(
@@ -2685,56 +2473,63 @@ def main12():
                         differentiation_times=diff_T,
                         time_length=1.0,
                         root_state="A",
-                        seed=(multi * num_trees_per_setting + seed) * 10 + inc
+                        seed=(multi * num_trees_per_setting + seed) * 10 + inc,
                     )
-        
+
                     save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/coord_diff/{setting}"
-        
+
                     os.makedirs(save_dir, exist_ok=True)
-        
+
                     # print(G.nodes(data=True))
-        
+
                     G = add_node_times(G)
-        
+
                     print(len(G.nodes))
-        
+
                     # save_tree(G, root, f"{save_dir}/T_{seed}.json")
                     G_extant = filter_extant_lineages(G, root)
                     G_extant, transitions = contract_edges(G_extant, root)
-        
+
                     # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
-        
-                    export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-        
-        
+
+                    export_tree(
+                        G_extant,
+                        f"{save_dir}/nodes_{seed}.csv",
+                        f"{save_dir}/edges_{seed}.csv",
+                    )
+
                     # try:
                     plot_simulated_lineage_tree(G, root, show_labels=False)
                     plt.savefig(f"{save_dir}/T_{seed}.png")
                     plt.close()
-        
+
                     plot_simulated_lineage_tree(G_extant, root, show_labels=False)
                     plt.savefig(f"{save_dir}/T_extant_{seed}.png")
                     plt.close()
                     # except Exception as e:
                     #     print(f"Plotting failed: {e}")
-        
-                    with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
+
+                    with open(f"{save_dir}/transition_times_{seed}.csv", "w") as f:
                         print(len(transitions), file=f, flush=True)
                         for a, _, _, _, _ in sorted(transitions):
                             print(a, file=f, flush=True)
-        
-                    with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
+
+                    with open(
+                        f"{save_dir}/transition_times_with_edges_{seed}.csv", "w"
+                    ) as f:
                         print(len(transitions), file=f, flush=True)
                         for t, e1, e2, s1, s2 in sorted(transitions):
-                            print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-        
+                            print(
+                                f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}",
+                                file=f,
+                                flush=True,
+                            )
+
                     break
 
                 except Exception as e:
 
                     inc += 1
-
-        
 
 
 def main13():
@@ -2748,8 +2543,8 @@ def main13():
     sampling_rates = [0.5, 0.6]
 
     diff_T = nx.DiGraph()
-    diff_T.add_node("A", transition_times = transition_times)
-    diff_T.add_node("B", transition_times = [])
+    diff_T.add_node("A", transition_times=transition_times)
+    diff_T.add_node("B", transition_times=[])
     diff_T.add_edge("A", "B")
 
     diff_probs = pd.DataFrame(
@@ -2758,7 +2553,7 @@ def main13():
             [0.0, 1.0],
         ],
         index=["A", "B"],
-        columns=["A", "B"]
+        columns=["A", "B"],
     )
 
     num_trees_per_setting = 1000
@@ -2774,7 +2569,6 @@ def main13():
             while True:
                 print(setting, seed, inc)
 
-
                 try:
 
                     G, root = simulate_multitype_bd_with_diff(
@@ -2794,56 +2588,63 @@ def main13():
                         differentiation_times=diff_T,
                         time_length=1.0,
                         root_state="A",
-                        seed=(multi * num_trees_per_setting + seed) * 10 + inc
+                        seed=(multi * num_trees_per_setting + seed) * 10 + inc,
                     )
-        
+
                     save_dir = f"/Users/samin/workspace/phylodynamic-carta/data/simulation/coord_diff/{setting}"
-        
+
                     os.makedirs(save_dir, exist_ok=True)
-        
+
                     # print(G.nodes(data=True))
-        
+
                     G = add_node_times(G)
-        
+
                     print(len(G.nodes))
-        
+
                     # save_tree(G, root, f"{save_dir}/T_{seed}.json")
                     G_extant = filter_extant_lineages(G, root)
                     G_extant, transitions = contract_edges(G_extant, root)
-        
+
                     # save_tree(G_extant, root, f"{save_dir}/T_extant_{seed}.json")
-        
-                    export_tree(G_extant, f"{save_dir}/nodes_{seed}.csv", f"{save_dir}/edges_{seed}.csv")
-        
-        
+
+                    export_tree(
+                        G_extant,
+                        f"{save_dir}/nodes_{seed}.csv",
+                        f"{save_dir}/edges_{seed}.csv",
+                    )
+
                     # try:
                     plot_simulated_lineage_tree(G, root, show_labels=False)
                     plt.savefig(f"{save_dir}/T_{seed}.png")
                     plt.close()
-        
+
                     plot_simulated_lineage_tree(G_extant, root, show_labels=False)
                     plt.savefig(f"{save_dir}/T_extant_{seed}.png")
                     plt.close()
                     # except Exception as e:
                     #     print(f"Plotting failed: {e}")
-        
-                    with open(f'{save_dir}/transition_times_{seed}.csv', 'w') as f:
+
+                    with open(f"{save_dir}/transition_times_{seed}.csv", "w") as f:
                         print(len(transitions), file=f, flush=True)
                         for a, _, _, _, _ in sorted(transitions):
                             print(a, file=f, flush=True)
-        
-                    with open(f'{save_dir}/transition_times_with_edges_{seed}.csv', 'w') as f:
+
+                    with open(
+                        f"{save_dir}/transition_times_with_edges_{seed}.csv", "w"
+                    ) as f:
                         print(len(transitions), file=f, flush=True)
                         for t, e1, e2, s1, s2 in sorted(transitions):
-                            print(f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}", file=f, flush=True)
-        
+                            print(
+                                f"{1-t},{e1},{e2},{ord(s1) - ord('A')},{ord(s2) - ord('A')}",
+                                file=f,
+                                flush=True,
+                            )
+
                     break
 
                 except Exception as e:
 
                     inc += 1
-
-
 
 
 def read_simulation_settings(setting_file):
@@ -2917,7 +2718,9 @@ def read_simulation_settings(setting_file):
             if len(row) != 2 or row[0] not in states:
                 raise ValueError(f"Invalid {section} entry on line {line_number}")
             if row[0] in values:
-                raise ValueError(f"Duplicate state in '{section}' on line {line_number}")
+                raise ValueError(
+                    f"Duplicate state in '{section}' on line {line_number}"
+                )
             try:
                 value = float(row[1])
             except ValueError as error:
@@ -2935,14 +2738,22 @@ def read_simulation_settings(setting_file):
         if len(row) < 2 or row[0] not in states:
             raise ValueError(f"Invalid transition-times entry on line {line_number}")
         if row[0] in seen_time_states:
-            raise ValueError(f"Duplicate state in 'transition times' on line {line_number}")
+            raise ValueError(
+                f"Duplicate state in 'transition times' on line {line_number}"
+            )
         seen_time_states.add(row[0])
         try:
-            transition_times[row[0]] = [] if row[1:] == ["-"] else [float(t) for t in row[1:]]
+            transition_times[row[0]] = (
+                [] if row[1:] == ["-"] else [float(t) for t in row[1:]]
+            )
         except ValueError as error:
-            raise ValueError(f"Invalid transition time on line {line_number}") from error
+            raise ValueError(
+                f"Invalid transition time on line {line_number}"
+            ) from error
         if any(t < 0 for t in transition_times[row[0]]):
-            raise ValueError(f"Transition times must be non-negative on line {line_number}")
+            raise ValueError(
+                f"Transition times must be non-negative on line {line_number}"
+            )
 
     if seen_time_states != set(states):
         raise ValueError("'transition times' must include each state; use '-' for none")
@@ -2950,31 +2761,49 @@ def read_simulation_settings(setting_file):
     transition_probabilities = pd.DataFrame(0.0, index=states, columns=states)
     seen_transitions = set()
     for line_number, row in sections["transition probabilities"]:
-        if len(row) != 4 or row[0] not in states or row[1] != "->" or row[2] not in states:
-            raise ValueError(f"Invalid transition-probability entry on line {line_number}")
+        if (
+            len(row) != 4
+            or row[0] not in states
+            or row[1] != "->"
+            or row[2] not in states
+        ):
+            raise ValueError(
+                f"Invalid transition-probability entry on line {line_number}"
+            )
         transition = (row[0], row[2])
         if transition in seen_transitions:
             raise ValueError(f"Duplicate transition on line {line_number}")
         try:
             probability = float(row[3])
         except ValueError as error:
-            raise ValueError(f"Invalid transition probability on line {line_number}") from error
+            raise ValueError(
+                f"Invalid transition probability on line {line_number}"
+            ) from error
         if not 0 <= probability <= 1:
-            raise ValueError(f"Transition probabilities must be between 0 and 1 on line {line_number}")
+            raise ValueError(
+                f"Transition probabilities must be between 0 and 1 on line {line_number}"
+            )
         transition_probabilities.loc[transition[0], transition[1]] = probability
         seen_transitions.add(transition)
 
     expected_transitions = {(source, target) for source in states for target in states}
     if seen_transitions != expected_transitions:
-        raise ValueError("'transition probabilities' must define every state-to-state pair")
-    if any(not np.isclose(transition_probabilities.loc[state].sum(), 1.0) for state in states):
+        raise ValueError(
+            "'transition probabilities' must define every state-to-state pair"
+        )
+    if any(
+        not np.isclose(transition_probabilities.loc[state].sum(), 1.0)
+        for state in states
+    ):
         raise ValueError("Transition probabilities for each state must sum to 1")
 
     try:
         time_horizon = float(one_value("simulation time horizon"))
         num_trees = int(one_value("num trees"))
     except ValueError as error:
-        raise ValueError("Time horizon must be numeric and 'num trees' must be an integer") from error
+        raise ValueError(
+            "Time horizon must be numeric and 'num trees' must be an integer"
+        ) from error
     if time_horizon <= 0 or num_trees <= 0:
         raise ValueError("Time horizon and number of trees must be positive")
 
@@ -2984,7 +2813,9 @@ def read_simulation_settings(setting_file):
 
     for state, times in transition_times.items():
         if times != sorted(times) or any(time > time_horizon for time in times):
-            raise ValueError(f"Transition times for {state} must be sorted and within the time horizon")
+            raise ValueError(
+                f"Transition times for {state} must be sorted and within the time horizon"
+            )
 
     return {
         "states": states,
@@ -3020,7 +2851,10 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
             transition_times=settings["transition_times"][state],
         )
         for target in settings["states"]:
-            if state != target and settings["transition_probabilities"].loc[state, target] > 0:
+            if (
+                state != target
+                and settings["transition_probabilities"].loc[state, target] > 0
+            ):
                 differentiation_times.add_edge(state, target)
 
     seed = source_seed
@@ -3038,8 +2872,7 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
                 seed=seed,
             )
             if not any(
-                data.get("event") == "sample"
-                for _, data in graph.nodes(data=True)
+                data.get("event") == "sample" for _, data in graph.nodes(data=True)
             ):
                 raise ValueError("Simulation produced no sampled extant tips")
             break
@@ -3087,10 +2920,14 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
 
 
 def main14():
-    parser = argparse.ArgumentParser(description="Generate one tree from a settings file.")
+    parser = argparse.ArgumentParser(
+        description="Generate one tree from a settings file."
+    )
     parser.add_argument("setting_file", help="Path to the simulator settings file")
     parser.add_argument("source_seed", type=int, help="Seed to try first")
-    parser.add_argument("output_dir", help="Directory in which to save the tree outputs")
+    parser.add_argument(
+        "output_dir", help="Directory in which to save the tree outputs"
+    )
     args = parser.parse_args()
 
     successful_seed = simulate_from_settings(
@@ -3099,9 +2936,6 @@ def main14():
         output_dir=args.output_dir,
     )
     print(f"Generated tree using seed {successful_seed}")
-
-            
-
 
 
 if __name__ == "__main__":

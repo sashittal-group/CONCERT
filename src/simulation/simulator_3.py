@@ -7,7 +7,12 @@ import os
 import json
 import argparse
 from src.plotters import plot_differentiation_tree, plot_simulated_lineage_tree
-from src.simulator import simulate_multitype_bd_with_diff, save_tree, filter_extant_lineages, load_tree
+from src.simulator import (
+    simulate_multitype_bd_with_diff,
+    save_tree,
+    filter_extant_lineages,
+    load_tree,
+)
 from src.likelihood import add_node_times, assign_states_to_internal_nodes
 
 from math import exp, log
@@ -30,7 +35,6 @@ def simulate(input_dir, seed):
         params = json.load(f)
         lam = params["birth_rates"]
         mu = params["death_rates"]
-
 
     G, root = simulate_multitype_bd_with_diff(
         birth_rates=lam,
@@ -57,7 +61,6 @@ def simulate(input_dir, seed):
     plot_simulated_lineage_tree(G_extant, root)
     plt.savefig(f"{save_dir}/T_extant.png")
     plt.close()
-
 
 
 if __name__ == "__main__":

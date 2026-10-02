@@ -145,7 +145,6 @@ def inverse_sigmoid(
     return torch.log(x / (1.0 - x))
 
 
-
 class PhylodynamicParameters(nn.Module):
 
     def __init__(
@@ -341,7 +340,7 @@ def calculate_total_log_likelihood(
 
     birth_rates = params.birth_rates
     death_rates = params.death_rates
-    sampling_probabilities = params.sampling_probabilities    
+    sampling_probabilities = params.sampling_probabilities
 
     # --------------------------------------------------------
     # U / flow_U / Cs
@@ -357,7 +356,6 @@ def calculate_total_log_likelihood(
     denominator = 1.0 - C0 * exponential
     U_root = 1.0 - r / (birth_rates * denominator)
 
-    
     # --------------------------------------------------------
     # TREE LIKELIHOOD
     # --------------------------------------------------------
@@ -371,17 +369,35 @@ def calculate_total_log_likelihood(
     for internal_node_state_counts, leaf_state_counts, state_edges in trees:
 
         for state in range(params.num_states):
-            LL = LL + leaf_state_counts[state] * torch.log(sampling_probabilities[state]) + \
-                  internal_node_state_counts[state] * torch.log(birth_rates[state])
+            LL = (
+                LL
+                + leaf_state_counts[state] * torch.log(sampling_probabilities[state])
+                + internal_node_state_counts[state] * torch.log(birth_rates[state])
+            )
 
             for s_t, e_t in state_edges[state]:
-                LL = LL - (s_t - e_t) * (birth_rates[state] - death_rates[state]) + \
-                        + 2.0 * (
-                            torch.log(1.0 - C0[state] * torch.exp(-(birth_rates[state] - death_rates[state]) * e_t)) -
-                            torch.log(1.0 - C0[state] * torch.exp(-(birth_rates[state] - death_rates[state]) * s_t))
+                LL = (
+                    LL
+                    - (s_t - e_t) * (birth_rates[state] - death_rates[state])
+                    + +2.0
+                    * (
+                        torch.log(
+                            1.0
+                            - C0[state]
+                            * torch.exp(
+                                -(birth_rates[state] - death_rates[state]) * e_t
+                            )
                         )
+                        - torch.log(
+                            1.0
+                            - C0[state]
+                            * torch.exp(
+                                -(birth_rates[state] - death_rates[state]) * s_t
+                            )
+                        )
+                    )
+                )
 
-        
         if normalize_root_likelihood:
             LL = LL - torch.log1p(-U_root[0])
 
@@ -452,6 +468,7 @@ def log_iteration(
 # MAIN OPTIMIZATION FUNCTION
 # ============================================================
 
+
 class LikelihoodModel(nn.Module):
 
     def __init__(
@@ -497,7 +514,7 @@ def optimize_parameters(
     device: Optional[torch.device | str] = None,
     normalize_root_likelihood: bool = False,
 ):
-    
+
     total_start = time.perf_counter()
 
     # ========================================================
@@ -632,7 +649,7 @@ def optimize_parameters(
     for start in range(0, len(trees), chunk_size):
         chunk_model = LikelihoodModel(
             params=params,
-            trees=trees[start:start + chunk_size],
+            trees=trees[start : start + chunk_size],
             normalize_root_likelihood=normalize_root_likelihood,
         )
         compiled_models.append(

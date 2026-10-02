@@ -61,6 +61,7 @@ color_map = {
     "C": "brown",
 }
 
+
 def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
     """
     Plot an edge-based birth–death tree.
@@ -74,7 +75,8 @@ def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
     # Find leaves (tips at final time)
     # ---------
     leaves = [
-        v for v in nx.dfs_postorder_nodes(G, source=root)
+        v
+        for v in nx.dfs_postorder_nodes(G, source=root)
         if G.out_degree(v) == 0 and v != root
     ]
 
@@ -136,7 +138,7 @@ def plot_simulated_lineage_tree(G, root, ax=None, show_labels=True):
     # ---------
     ax.set_xlabel("Lineages")
     ax.set_ylabel("Time")
-    ax.invert_yaxis()   # time flows downward (phylo convention)
+    ax.invert_yaxis()  # time flows downward (phylo convention)
     ax.set_xticks([])
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -156,7 +158,7 @@ def plot_differentiation_tree(
 ):
     """
     Plot differentiation tree with optional birth/death rates and transition probabilities.
-    
+
     Nodes: cell types (showing τ, b, d)
     Edges: differentiation paths (showing transition probabilities)
     """
@@ -171,7 +173,9 @@ def plot_differentiation_tree(
         if diff_T.nodes[n].get("diff_time") is not None:
             label += f"\nτ={diff_T.nodes[n]['diff_time']:.2f}"
         if diff_T.nodes[n].get("diff_times") is not None:
-            times_str = ", ".join(f"{t:.2f}" for t in diff_T.nodes[n]["diff_times"] if t is not None)
+            times_str = ", ".join(
+                f"{t:.2f}" for t in diff_T.nodes[n]["diff_times"] if t is not None
+            )
             if times_str:
                 label += f"\nτs=[{times_str}]"
         if deflate_labels:
@@ -202,25 +206,40 @@ def plot_differentiation_tree(
                 if f"{v}_0" in transition_probabilities.columns:
                     vc = f"{v}_0"
 
-                prob = transition_probabilities.loc[uc, vc] if (
-                    uc in transition_probabilities.index and vc in transition_probabilities.columns
-                ) else 0.0
+                prob = (
+                    transition_probabilities.loc[uc, vc]
+                    if (
+                        uc in transition_probabilities.index
+                        and vc in transition_probabilities.columns
+                    )
+                    else 0.0
+                )
                 edge_labels[(u, v)] = f"{prob:.3f}"
-            
+
             for n in diff_T.nodes:
                 if f"{n}_0" in transition_probabilities.index:
-                    edge_labels[(n, n)] = f"{transition_probabilities.loc[f'{n}_0', f'{n}_1']:.3f}"
+                    edge_labels[(n, n)] = (
+                        f"{transition_probabilities.loc[f'{n}_0', f'{n}_1']:.3f}"
+                    )
                     diff_T.add_edge(n, n)  # self-loop for deflated node
-        
+
         else:
             for u, v in diff_T.edges:
-                prob = transition_probabilities.loc[u, v] if (
-                    u in transition_probabilities.index and v in transition_probabilities.columns
-                ) else 0.0
+                prob = (
+                    transition_probabilities.loc[u, v]
+                    if (
+                        u in transition_probabilities.index
+                        and v in transition_probabilities.columns
+                    )
+                    else 0.0
+                )
                 edge_labels[(u, v)] = f"{prob:.3f}"
 
     # Node colors
-    node_colors = [color_map.get(n, "lightblue") if color_map else "lightblue" for n in diff_T.nodes()]
+    node_colors = [
+        color_map.get(n, "lightblue") if color_map else "lightblue"
+        for n in diff_T.nodes()
+    ]
 
     # Draw tree
     nx.draw(
@@ -229,7 +248,7 @@ def plot_differentiation_tree(
         with_labels=False,
         node_size=900,
         node_color=node_colors,
-        arrows=True
+        arrows=True,
     )
 
     # Draw node labels (smaller font)
@@ -238,18 +257,14 @@ def plot_differentiation_tree(
             diff_T,
             pos,
             labels=node_labels,
-            font_size=8,       # smaller font
-            font_color="black"
+            font_size=8,  # smaller font
+            font_color="black",
         )
 
         # Draw edge labels (red, smaller)
         if transition_probabilities is not None:
             nx.draw_networkx_edge_labels(
-                diff_T,
-                pos,
-                edge_labels=edge_labels,
-                font_size=7,
-                font_color="red"
+                diff_T, pos, edge_labels=edge_labels, font_size=7, font_color="red"
             )
 
     plt.axis("off")
@@ -281,7 +296,11 @@ def draw_ultrametric_tree(
     dfs(root, 0.0)
 
     # X positions: leaves first
-    leaves = [v for v in nx.dfs_postorder_nodes(T, source=root) if T.out_degree(v) == 0 and v != root]
+    leaves = [
+        v
+        for v in nx.dfs_postorder_nodes(T, source=root)
+        if T.out_degree(v) == 0 and v != root
+    ]
     x = {leaf: i for i, leaf in enumerate(leaves)}
 
     def assign_x(n):
@@ -328,7 +347,13 @@ def draw_ultrametric_tree(
 
     transitions_by_edge = {}
     if transition_times_of_edges is not None:
-        for parent_id, child_id, state_0, state_1, transition_time in transition_times_of_edges:
+        for (
+            parent_id,
+            child_id,
+            state_0,
+            state_1,
+            transition_time,
+        ) in transition_times_of_edges:
             parent = resolve_node(parent_id)
             child = resolve_node(child_id)
             if parent is None or child is None or not T.has_edge(parent, child):
@@ -339,7 +364,9 @@ def draw_ultrametric_tree(
                 float(transition_time),
             )
 
-    color_edges_by_state = node_colors is not None or transition_times_of_edges is not None
+    color_edges_by_state = (
+        node_colors is not None or transition_times_of_edges is not None
+    )
 
     def state_color(state, default="black"):
         try:
@@ -434,18 +461,28 @@ def draw_ultrametric_tree(
                 if children:
                     label = f"{n}→ {{{', '.join(map(str, children))}}}"
                     ax.text(-0.15, -dt + 0.01, label, fontsize=9, zorder=11)
-    
+
     if diff_times is not None:
         for dt in diff_times:
             ax.axhline(-dt, color="purple", linestyle="dotted", zorder=10)
-            ax.text(-0.15, -dt + 0.01, f"τ={dt:.2f}", fontsize=9, color="purple", zorder=11)
+            ax.text(
+                -0.15, -dt + 0.01, f"τ={dt:.2f}", fontsize=9, color="purple", zorder=11
+            )
 
     # Optional horizontal lines at birth events
     if draw_birth_event_lines:
         birth_nodes = [n for n in T.nodes if T.out_degree(n) > 1]
         x_min, x_max = min(x.values()), max(x.values())
         for n in birth_nodes:
-            ax.hlines(y[n], xmin=x_min - 0.5, xmax=x_max + 0.5, colors="red", linestyles="dashed", alpha=0.6, linewidth=1.2)
+            ax.hlines(
+                y[n],
+                xmin=x_min - 0.5,
+                xmax=x_max + 0.5,
+                colors="red",
+                linestyles="dashed",
+                alpha=0.6,
+                linewidth=1.2,
+            )
 
     # Set y-axis ticks properly
     if maxtime is None:

@@ -5,7 +5,7 @@ from scipy.optimize import minimize
 
 
 def unpack_params(theta):
-    types = ['A', 'B', 'C']
+    types = ["A", "B", "C"]
 
     k = 0
 
@@ -24,7 +24,7 @@ def unpack_params(theta):
     Q = pd.DataFrame(0.0, index=types, columns=types)
 
     transition_maps = [
-        ('A', ['B', 'C']),
+        ("A", ["B", "C"]),
     ]
 
     for i, transition_to in transition_maps:
@@ -46,6 +46,7 @@ def unpack_params(theta):
 
     return birth, death, Q
 
+
 def neg_log_likelihood(theta, cell_lineage_T, diff_T, sampling_rate=1.0):
     birth, death, Q = unpack_params(theta)
 
@@ -55,19 +56,20 @@ def neg_log_likelihood(theta, cell_lineage_T, diff_T, sampling_rate=1.0):
         sampling_rate=sampling_rate,
         transition_probabilities=Q,
         cell_lineage_T=cell_lineage_T,
-        diff_T=diff_T
+        diff_T=diff_T,
     )
 
     # if p <= 1e-300:
-    #     return 1e6 
+    #     return 1e6
 
     return -np.log(p)
 
+
 def pack_initial():
     params = []
-    types = ['A', 'B', 'C']
+    types = ["A", "B", "C"]
     transition_maps = [
-        ('A', ['B', 'C']),
+        ("A", ["B", "C"]),
     ]
 
     # log death
@@ -93,7 +95,7 @@ def find_params(cell_lineage_T, diff_T):
         neg_log_likelihood,
         theta0,
         args=(cell_lineage_T, diff_T, 1.0),
-        method="L-BFGS-B"
+        method="L-BFGS-B",
     )
 
     return unpack_params(result.x)

@@ -158,7 +158,6 @@ def write_result(
 
     sampling = result.sampling_probabilities.detach().cpu().tolist()
 
-
     log_likelihood = result.log_likelihood
 
     if isinstance(
@@ -193,8 +192,12 @@ def write_result(
         out.write("\n")
 
 
-
-def prepare_data(nodes: list[Node], edges: list[Edge], transition_times_df: pd.DataFrame, num_states: int):
+def prepare_data(
+    nodes: list[Node],
+    edges: list[Edge],
+    transition_times_df: pd.DataFrame,
+    num_states: int,
+):
 
     internal_node_state_counts = [0] * num_states
     leaf_state_counts = [0] * num_states
@@ -209,15 +212,14 @@ def prepare_data(nodes: list[Node], edges: list[Edge], transition_times_df: pd.D
         else:
             internal_node_state_counts[node.state] += 1
 
-
     state_egdes = []
     for _ in range(num_states):
         state_egdes.append([])
 
     for edge in edges:
         transition_filt = transition_times_df[
-            (transition_times_df['parent'] == edge.u) & 
-            (transition_times_df['child'] == edge.v)
+            (transition_times_df["parent"] == edge.u)
+            & (transition_times_df["child"] == edge.v)
         ]
 
         start_time = node_dict[edge.u].T
@@ -227,7 +229,8 @@ def prepare_data(nodes: list[Node], edges: list[Edge], transition_times_df: pd.D
 
         if not transition_filt.empty:
             transition_times = [
-                (d.parent, d.child, d.s0, d.s1, d.t) for d in transition_filt.itertuples()
+                (d.parent, d.child, d.s0, d.s1, d.t)
+                for d in transition_filt.itertuples()
             ]
             transition_times.sort(key=lambda x: x[4], reverse=True)
 
@@ -239,7 +242,6 @@ def prepare_data(nodes: list[Node], edges: list[Edge], transition_times_df: pd.D
         state_egdes[start_state].append((start_time, end_time))
 
     return internal_node_state_counts, leaf_state_counts, state_egdes
-
 
 
 # ============================================================
@@ -314,18 +316,15 @@ def main():
                 raise RuntimeError(f"No edges loaded from " f"{edge_path}")
 
             if len(df_transition_times) == 0:
-                raise RuntimeError(f"No transition times loaded from " f"{transition_times_path}")
+                raise RuntimeError(
+                    f"No transition times loaded from " f"{transition_times_path}"
+                )
 
             internal_node_state_counts, leaf_state_counts, state_egdes = prepare_data(
-                loaded_nodes,
-                loaded_edges,
-                df_transition_times,
-                num_states
+                loaded_nodes, loaded_edges, df_transition_times, num_states
             )
 
-            trees.append(
-                (internal_node_state_counts, leaf_state_counts, state_egdes)
-            )
+            trees.append((internal_node_state_counts, leaf_state_counts, state_egdes))
 
             print(
                 f"[timing] tree {i} preparation: "
@@ -339,7 +338,7 @@ def main():
         initial_birth_rates = None
         initial_death_rates = None
         initial_sampling_probabilities = None
-        
+
         # ====================================================
         # FIXED PARAMETERS
         # ====================================================
