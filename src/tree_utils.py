@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections import deque
+from bisect import bisect_right
 from typing import Sequence
 
 import numpy as np
 import torch
+import networkx as nx
 
 from src.dtos import (
     Node,
@@ -367,3 +368,185 @@ def prepare_tree(
         # Torch
         time_t=time_t,
     )
+
+
+def prepare_nx_tree(
+    input_nodes: Sequence[Node],
+    input_edges: Sequence[Edge],
+) -> nx.DiGraph:
+    """Build a NetworkX directed tree from raw node/edge records."""
+
+    if len(input_nodes) == 0:
+        raise ValueError("No input nodes were provided.")
+
+    if len(input_edges) == 0:
+        raise ValueError("No input edges were provided.")
+
+    graph = nx.DiGraph()
+    node_ids = {node.id for node in input_nodes}
+
+    for node in input_nodes:
+        graph.add_node(
+            node.id,
+            T=float(node.T),
+            is_leaf=bool(node.is_leaf),
+            state=int(node.state),
+        )
+
+    indegree = {node_id: 0 for node_id in node_ids}
+
+    for edge in input_edges:
+        if edge.u not in node_ids:
+            raise ValueError(f"Unknown node ID in edge.u: {edge.u}")
+
+        if edge.v not in node_ids:
+            raise ValueError(f"Unknown node ID in edge.v: {edge.v}")
+
+        if edge.u == edge.v:
+            raise ValueError(f"Self-loop edge detected: {edge.u}")
+
+        graph.add_edge(edge.u, edge.v, length=float(edge.length))
+        indegree[edge.v] += 1
+
+    roots = [node_id for node_id, degree in indegree.items() if degree == 0]
+
+    if len(roots) == 0:
+        raise ValueError("No root found.")
+
+    if len(roots) > 1:
+        raise ValueError(f"Multiple roots detected: {roots}")
+
+    graph.graph["root"] = roots[0]
+
+    return graph
+
+
+def cut_tree(
+    tree: nx.DiGraph,
+    cut_times: Sequence[float],
+) -> tuple[list[list[nx.DiGraph]], nx.DiGraph]:
+    """Split a rooted tree by time cuts into nested components.
+
+    Each level stores the nodes between the current cut and the next lower cut,
+    so deeper levels do not inherit nodes from shallower levels.
+    """
+
+    if not cut_times:
+        raise ValueError("No cut times were provided.")
+
+    if "root" not in tree.graph:
+        raise ValueError("Tree does not have tree.graph['root'].")
+
+    root = tree.graph["root"]
+    if root not in tree:
+        raise ValueError(f"Root {root} is not present in the tree.")
+
+    cuts = sorted(float(t) for t in cut_times)
+    cuts_desc = cuts[::-1]
+    node_times = {node: float(data["T"]) for node, data in tree.nodes(data=True)}
+
+    for u, v in tree.edges():
+        Tu = node_times[u]
+        Tv = node_times[v]
+        if Tu < Tv:
+            raise ValueError(
+                f"Invalid temporal ordering on edge {u} -> {v}: "
+                f"T[{u}]={Tu} < T[{v}]={Tv}"
+            )
+
+    def descendants(start: int) -> set[int]:
+        seen: set[int] = set()
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(tree.successors(node))
+        return seen
+
+    level_trees: list[list[nx.DiGraph]] = [[] for _ in range(len(cuts_desc) + 1)]
+    hierarchy = nx.DiGraph()
+    subtree_key_by_root: dict[int, tuple[int, int]] = {}
+
+    top_cut = cuts_desc[0]
+    top_nodes = {node for node, T in node_times.items() if T > top_cut}
+    if not top_nodes:
+        raise ValueError(
+            f"No nodes remain above the first cut time {top_cut}; "
+            "the root-side subtree is empty."
+        )
+
+    top_tree = tree.subgraph(top_nodes).copy()
+    top_tree.graph["root"] = root
+    top_tree.graph["cut_time"] = top_cut
+    top_tree.graph["level"] = 0
+    level_trees[0].append(top_tree)
+
+    root_key = (0, root)
+    hierarchy.add_node(
+        root_key,
+        level=0,
+        root=root,
+        cut_time=top_cut,
+        tree=top_tree,
+    )
+    subtree_key_by_root[root] = root_key
+
+    for level, cut_time in enumerate(cuts_desc):
+        next_cut = cuts_desc[level + 1] if level + 1 < len(cuts_desc) else None
+
+        frontier_children = sorted(
+            {
+                child
+                for parent, child in tree.edges()
+                if node_times[parent] > cut_time >= node_times[child]
+            }
+        )
+
+        for child in frontier_children:
+            allowed = {
+                node
+                for node in descendants(child)
+                if next_cut is None or node_times[node] > next_cut
+            }
+            if not allowed:
+                continue
+
+            subtree = tree.subgraph(allowed).copy()
+            subtree.graph["root"] = child
+            subtree.graph["cut_time"] = cut_time
+            subtree.graph["level"] = level + 1
+            level_trees[level + 1].append(subtree)
+
+            child_key = (level + 1, child)
+            hierarchy.add_node(
+                child_key,
+                level=level + 1,
+                root=child,
+                cut_time=cut_time,
+                tree=subtree,
+            )
+
+            parent_key = root_key
+            current = child
+            while current != root:
+                parent = next(tree.predecessors(current))
+                if parent in subtree_key_by_root:
+                    parent_key = subtree_key_by_root[parent]
+                    break
+                current = parent
+
+            hierarchy.add_edge(parent_key, child_key)
+            subtree_key_by_root[child] = child_key
+
+    for trees in level_trees:
+        trees.sort(key=lambda g: g.graph["root"])
+
+    return level_trees, hierarchy
+
+
+def get_datastructure_for_likelihood_calculation(
+    levels: list[list[nx.DiGraph]], hierarchy: nx.DiGraph
+):
+    pass
