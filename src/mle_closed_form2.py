@@ -490,7 +490,6 @@ def calculate_total_log_likelihood(
     )
 
     for tree_index, (tree, datastructure) in enumerate(zip(trees, datastructures)):
-
         result = calculate_log_likelihood(
             datastructure,
             birth_rates,
@@ -749,7 +748,7 @@ def optimize_parameters(
     # ========================================================
 
     compile_start = time.perf_counter()
-    chunk_size = 100
+    chunk_size = 10
     compiled_models = []
 
     for start in range(0, len(trees), chunk_size):

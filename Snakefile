@@ -1,3 +1,5 @@
+from pathlib import Path
+
 num_batches = 10
 trees_per_batch = 10
 seed_stride = 100
@@ -7,6 +9,29 @@ setting_root = "data/simulation/coord_diff"
 setting_ids = glob_wildcards(f"{setting_root}/setting_{{setting}}/setting.txt").setting
 transition_edges_file = "src/transition_edges.txt"
 transition_times_file = "transition.txt"
+tls_root = "data/troupe/TLS"
+tls_tree_root = f"{tls_root}/subtrees_kept_states"
+tls_nodes_files = sorted(Path(tls_tree_root).rglob("nodes.csv"))
+tls_tree_pairs = [
+    (nodes_file, nodes_file.with_name("edges.csv"))
+    for nodes_file in tls_nodes_files
+    if nodes_file.with_name("edges.csv").is_file()
+]
+if len(tls_tree_pairs) != len(tls_nodes_files):
+    raise ValueError(f"Some TLS node files have no matching edges file in {tls_tree_root}")
+tls_transition_edges_file = "data/troupe/transition-edges.txt"
+tls_transition_times_file = "data/troupe/transition-times.txt"
+tlsc_root = "data/troupe/TLSC"
+tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
+tlsc_nodes_files = sorted(Path(tlsc_tree_root).rglob("nodes.csv"))
+tlsc_tree_pairs = [
+    (nodes_file, nodes_file.with_name("edges.csv"))
+    for nodes_file in tlsc_nodes_files
+    if nodes_file.with_name("edges.csv").is_file()
+]
+if len(tlsc_tree_pairs) != len(tlsc_nodes_files):
+    raise ValueError(f"Some TLSC node files have no matching edges file in {tlsc_tree_root}")
+tlsc_transition_times_file = "data/troupe/transition-times.txt"
 
 
 def setting_num_states(setting):
@@ -27,11 +52,13 @@ rule all:
         #     batch=batch_indices,
         #     tree=tree_indices,
         # ),
-        expand(
-            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.out",
-            setting=setting_ids,
-            batch=batch_indices,
-        ),
+        # expand(
+        #     f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.out",
+        #     setting=setting_ids,
+        #     batch=batch_indices,
+        # ),
+        # f"{tls_root}/inference.out",
+        f"{tlsc_root}/inference.out",
 
 
 rule simulate:
@@ -99,6 +126,76 @@ rule infer_batch:
         "--transition-times-file {input.transition_times:q} "
         "--output {output.out:q} --log {log.optimization:q} "
         " --device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_tls:
+    input:
+        nodes=[str(nodes_file) for nodes_file, _ in tls_tree_pairs],
+        edges=[str(edges_file) for _, edges_file in tls_tree_pairs],
+        transition_edges=tls_transition_edges_file,
+        transition_times=tls_transition_times_file,
+    output:
+        out=f"{tls_root}/inference.out",
+    params:
+        tree_directory=tls_tree_root,
+        num_trees=len(tls_tree_pairs),
+        num_states=3,
+    log:
+        optimization=f"{tls_root}/inference.log",
+        stdout=f"{tls_root}/inference.stdout.log",
+        stderr=f"{tls_root}/inference.stderr.log",
+    benchmark:
+        f"{tls_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_tlsc:
+    input:
+        nodes=[str(nodes_file) for nodes_file, _ in tlsc_tree_pairs],
+        edges=[str(edges_file) for _, edges_file in tlsc_tree_pairs],
+        transition_edges=tls_transition_edges_file,
+        transition_times=tlsc_transition_times_file,
+    output:
+        out=f"{tlsc_root}/inference.out",
+    params:
+        tree_directory=tlsc_tree_root,
+        num_trees=len(tlsc_tree_pairs),
+        num_states=3,
+    log:
+        optimization=f"{tlsc_root}/inference.log",
+        stdout=f"{tlsc_root}/inference.stdout.log",
+        stderr=f"{tlsc_root}/inference.stderr.log",
+    benchmark:
+        f"{tlsc_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--shared-sampling-rate "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 

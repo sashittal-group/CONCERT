@@ -469,10 +469,22 @@ def main(normalize_root_likelihood: bool | None = None):
         # ====================================================
 
         transition_times = read_transition_times(args.transition_times_file)
+        if transition_times[0] == 0.0:
+            transition_times = transition_times[1:]
 
         print(f"transition_times={transition_times}")
 
-        cut_trees = [cut_tree(tree, transition_times) for tree in trees]
+        tree_transition_times = []
+        cut_trees = []
+        for tree in trees:
+            root_time = float(tree.nodes[tree.graph["root"]]["T"])
+            local_transition_times = [
+                transition_time
+                for transition_time in transition_times
+                if transition_time < root_time
+            ]
+            tree_transition_times.append(local_transition_times)
+            cut_trees.append(cut_tree(tree, local_transition_times))
 
         for ct in cut_trees:
             levels, hierarchy = ct
@@ -489,10 +501,12 @@ def main(normalize_root_likelihood: bool | None = None):
             get_datastructure_for_likelihood_calculation(
                 levels,
                 hierarchy,
-                transition_times,
+                local_transition_times,
                 num_states,
             )
-            for levels, hierarchy in cut_trees
+            for (levels, hierarchy), local_transition_times in zip(
+                cut_trees, tree_transition_times
+            )
         ]
 
         # ====================================================

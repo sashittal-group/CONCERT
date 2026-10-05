@@ -436,15 +436,27 @@ def cut_tree(
     the root of the descendant subtree below the cut.
     """
 
-    if not cut_times:
-        raise ValueError("No cut times were provided.")
-
     if "root" not in tree.graph:
         raise ValueError("Tree does not have tree.graph['root'].")
 
     root = tree.graph["root"]
     if root not in tree:
         raise ValueError(f"Root {root} is not present in the tree.")
+
+    if not cut_times:
+        whole_tree = tree.copy()
+        whole_tree.graph["cut_time"] = None
+        whole_tree.graph["level"] = 0
+        hierarchy = nx.DiGraph()
+        root_key = (0, root)
+        hierarchy.add_node(
+            root_key,
+            level=0,
+            root=root,
+            cut_time=None,
+            tree=whole_tree,
+        )
+        return [[whole_tree]], hierarchy
 
     cuts_desc = sorted({float(t) for t in cut_times}, reverse=True)
     node_times = {node: float(data["T"]) for node, data in tree.nodes(data=True)}
@@ -669,11 +681,14 @@ def get_datastructure_for_likelihood_calculation(
         ds["num_births"] = torch.as_tensor(num_births_of_level_trees)
         ds["num_sampling"] = torch.as_tensor(num_sampling_of_level_trees)
         ds["num_sampling_by_state"] = torch.as_tensor(
-            np.asarray(sampling_state_counts_of_level_trees, dtype=np.int64)
+            np.asarray(sampling_state_counts_of_level_trees, dtype=np.int64).reshape(
+                len(level), num_states
+            )
         )
         ds["start_times"] = torch.as_tensor([st for st_list in start_times_of_level_trees for st in st_list])
         ds["end_times"] = torch.as_tensor([et for et_list in end_times_of_level_trees for et in et_list])
         ds["edge_matrix"] = torch.as_tensor(edge_matrix)
+        ds["transition_times"] = tuple(float(t) for t in cut_times)
 
         level_ds.append(ds)
 

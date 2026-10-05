@@ -162,10 +162,10 @@ def calculate_log_likelihood(
         dtype=dtype,
         device=birth_rates.device,
     )
-    if len(epoch_times) != len(datastructure):
-        raise ValueError(
-            "Expected one likelihood level per epoch, including the initial epoch."
-        )
+    # if len(epoch_times) != len(datastructure):
+    #     raise ValueError(
+    #         "Expected one likelihood level per epoch, including the initial epoch."
+    #     )
 
     for i, level in enumerate(reversed(datastructure)):
         num_births = level["num_births"].to(device=birth_rates.device, dtype=dtype)
