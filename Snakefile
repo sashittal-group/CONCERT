@@ -6,6 +6,7 @@ tree_indices = range(trees_per_batch)
 setting_root = "data/simulation/coord_diff"
 setting_ids = glob_wildcards(f"{setting_root}/setting_{{setting}}/setting.txt").setting
 transition_edges_file = "src/transition_edges.txt"
+transition_times_file = "transition.txt"
 
 
 def setting_num_states(setting):
@@ -70,6 +71,7 @@ rule infer_batch:
             f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/tree_{{tree}}/edges.csv",
             tree=tree_indices,
         ),
+        transition_times=transition_times_file,
     output:
         out=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.out",
     params:
@@ -94,6 +96,7 @@ rule infer_batch:
         "python -m src.main2 {params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-edges-file {transition_edges_file:q} "
+        "--transition-times-file {input.transition_times:q} "
         "--output {output.out:q} --log {log.optimization:q} "
         " --device cpu --optimizer adam --normalize-root-likelihood "
         "> {log.stdout:q} 2> {log.stderr:q}"

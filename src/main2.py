@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import time
 from pathlib import Path
@@ -54,6 +55,13 @@ def parse_args():
         "--transition-edges-file",
         type=str,
         required=True,
+    )
+
+    parser.add_argument(
+        "--transition-times-file",
+        type=str,
+        default="transition.txt",
+        help="File containing one transition time per line.",
     )
 
     parser.add_argument(
@@ -246,6 +254,43 @@ def read_free_edges(file_path: str) -> list[tuple[int, int]]:
     return free_edges
 
 
+def read_transition_times(file_path: str) -> list[float]:
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Transition-times file does not exist: {path}")
+
+    transition_times = []
+    with path.open() as transition_file:
+        for line_number, line in enumerate(transition_file, start=1):
+            value = line.split("#", 1)[0].strip()
+            if not value:
+                continue
+            try:
+                transition_time = float(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid transition time at {path}:{line_number}: {value}"
+                ) from exc
+            if not math.isfinite(transition_time) or transition_time < 0:
+                raise ValueError(
+                    f"Transition time at {path}:{line_number} must be finite "
+                    "and nonnegative."
+                )
+            transition_times.append(transition_time)
+
+    if not transition_times:
+        raise ValueError(f"No transition times found in {path}")
+
+    transition_times.sort()
+    if any(
+        current <= previous
+        for previous, current in zip(transition_times, transition_times[1:])
+    ):
+        raise ValueError(f"Transition times in {path} must be unique.")
+
+    return transition_times
+
+
 def write_result(
     output_file: str,
     result,
@@ -423,7 +468,7 @@ def main(normalize_root_likelihood: bool | None = None):
         # TRANSITION EPOCHS
         # ====================================================
 
-        transition_times = sorted([0.5 - 1e-6])
+        transition_times = read_transition_times(args.transition_times_file)
 
         print(f"transition_times={transition_times}")
 
