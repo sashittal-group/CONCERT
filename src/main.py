@@ -459,7 +459,7 @@ def main(normalize_root_likelihood: bool | None = None):
         #     {0.5 - 1e-6, free_edges}
         # );
 
-        transition_times = [0, 1e-4, 1e-3] + [0.005 * i for i in range(1, 21)]
+        transition_times = [0, 0.5 - 1e-6]
 
         print(f"transition_times={transition_times}")
 

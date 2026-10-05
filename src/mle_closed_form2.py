@@ -7,11 +7,12 @@ from pathlib import Path
 import time
 from typing import Callable, Optional
 
+import networkx as nx
+
 import torch
 import torch.nn as nn
 
 from src.dtos import (
-    PreparedTree,
     LikelihoodResult,
     UResult,
     OptimizationResult,
@@ -19,7 +20,7 @@ from src.dtos import (
 
 from src.closed_form_coord2 import (
     calculate_Us,
-    calculate_log_likelihood_levelwise,
+    calculate_log_likelihood,
 )
 
 
@@ -100,32 +101,6 @@ def as_tensor(
         device=device,
         dtype=dtype,
     )
-
-
-def move_tree_to_device(
-    tree: PreparedTree,
-    device: torch.device,
-) -> PreparedTree:
-    """
-    Move all tensor fields in PreparedTree to the requested device.
-    """
-
-    return PreparedTree(
-        root=tree.root,
-        original_id=tree.original_id,
-        time=tree.time,
-        state=tree.state,
-        parent=tree.parent,
-        children=tree.children,
-        edge_idx_to_parent=tree.edge_idx_to_parent,
-        edge_parent=tree.edge_parent,
-        edge_child=tree.edge_child,
-        postorder=tree.postorder,
-        levels=tree.levels,
-        level_batches=tree.level_batches,
-        time_t=tree.time_t.to(device),
-    )
-
 
 import torch
 import torch.nn as nn
@@ -465,7 +440,8 @@ class PhylodynamicParameters(nn.Module):
 
 def calculate_total_log_likelihood(
     params: PhylodynamicParameters,
-    trees: list[PreparedTree],
+    trees: list[nx.DiGraph],
+    datastructures: list[dict],
     static_transition_times: list[float] | None = None,
     normalize_root_likelihood: bool = False,
 ) -> torch.Tensor:
@@ -488,7 +464,10 @@ def calculate_total_log_likelihood(
     # U / flow_U / Cs
     # --------------------------------------------------------
 
-    root_times = [tree.time[tree.root] for tree in trees]
+    root_times = [
+        float(tree.nodes[tree.graph["root"]]["T"])
+        for tree in trees
+    ]
     U_result = calculate_Us(
         birth_rates,
         death_rates,
@@ -510,10 +489,10 @@ def calculate_total_log_likelihood(
         dtype=torch.float64,
     )
 
-    for tree_index, tree in enumerate(trees):
+    for tree_index, (tree, datastructure) in enumerate(zip(trees, datastructures)):
 
-        result = calculate_log_likelihood_levelwise(
-            tree,
+        result = calculate_log_likelihood(
+            datastructure,
             birth_rates,
             death_rates,
             transition_probabilities,
@@ -522,7 +501,7 @@ def calculate_total_log_likelihood(
             static_transition_times,
         )
 
-        LL = LL + result.root_loglikelihood
+        LL = LL + result[0, 0]
         if normalize_root_likelihood:
             LL = LL - torch.log1p(-U_result.root_U[tree_index, 0])
 
@@ -599,12 +578,14 @@ class LikelihoodModel(nn.Module):
         self,
         params,
         trees,
+        datastructures,
         normalize_root_likelihood: bool = False,
     ):
         super().__init__()
 
         self.params = params
         self.trees = trees
+        self.datastructures = datastructures
         self.normalize_root_likelihood = normalize_root_likelihood
         self.static_transition_times = params.transition_times.detach().cpu().tolist()
 
@@ -613,13 +594,15 @@ class LikelihoodModel(nn.Module):
         return calculate_total_log_likelihood(
             params=self.params,
             trees=self.trees,
+            datastructures=self.datastructures,
             static_transition_times=self.static_transition_times,
             normalize_root_likelihood=self.normalize_root_likelihood,
         )
 
 
 def optimize_parameters(
-    trees: list[PreparedTree],
+    trees: list[nx.DiGraph],
+    datastructure: list[dict],
     num_states: int,
     given_transition_times: list[float],
     free_edges: list[tuple[int, int]],
@@ -629,8 +612,8 @@ def optimize_parameters(
     given_death_rates=None,
     initial_sampling_probabilities=None,
     initial_transition_probabilities=None,
-    # given_birth_rates=None,
-    # given_sampling_probabilities=None,
+    given_birth_rates=None,
+    given_sampling_probabilities=None,
     # --------------------------------------------------------
     # PyTorch optimizer settings
     # --------------------------------------------------------
@@ -709,6 +692,7 @@ def optimize_parameters(
         LL = calculate_total_log_likelihood(
             params=params,
             trees=trees,
+            datastructures=datastructure,
             normalize_root_likelihood=normalize_root_likelihood,
         )
 
@@ -772,6 +756,7 @@ def optimize_parameters(
         chunk_model = LikelihoodModel(
             params=params,
             trees=trees[start : start + chunk_size],
+            datastructures=datastructure[start : start + chunk_size],
             normalize_root_likelihood=normalize_root_likelihood,
         )
         compiled_models.append(
@@ -941,6 +926,7 @@ def optimize_parameters(
         final_LL = calculate_total_log_likelihood(
             params=params,
             trees=trees,
+            datastructures=datastructure,
             static_transition_times=(given_transition_times),
             normalize_root_likelihood=normalize_root_likelihood,
         )

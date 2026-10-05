@@ -73,8 +73,8 @@ rule infer_batch:
     output:
         out=f"{setting_root}/setting_{{setting}}/batch_{{batch}}/inference.out",
     params:
-        tree_path_regex=lambda wildcards: (
-            rf"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/tree_\d+/edges\.csv"
+        tree_directory=lambda wildcards: (
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}"
         ),
         num_trees=trees_per_batch,
         num_states=lambda wildcards: setting_num_states(wildcards.setting),
@@ -91,7 +91,7 @@ rule infer_batch:
         "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
         "export TMPDIR=\"$job_tmp/tmp\" && "
         "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
-        "python -m src.main {params.tree_path_regex:q} "
+        "python -m src.main2 {params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-edges-file {transition_edges_file:q} "
         "--output {output.out:q} --log {log.optimization:q} "

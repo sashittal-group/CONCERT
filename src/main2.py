@@ -12,7 +12,7 @@ import os
 import torch
 
 from src.dataprocessor import load_nodes, load_edges
-from src.tree_utils import cut_tree, prepare_nx_tree, prepare_tree
+from src.tree_utils import cut_tree, prepare_nx_tree, get_datastructure_for_likelihood_calculation
 
 from src.mle_closed_form2 import (
     optimize_parameters,
@@ -423,7 +423,7 @@ def main(normalize_root_likelihood: bool | None = None):
         # TRANSITION EPOCHS
         # ====================================================
 
-        transition_times = sorted([0.5])
+        transition_times = sorted([0.5 - 1e-6])
 
         print(f"transition_times={transition_times}")
 
@@ -441,13 +441,14 @@ def main(normalize_root_likelihood: bool | None = None):
 
 
         dats = [
-            get_datastructure_for_likelihood_calculation(levels, hierarchy)
+            get_datastructure_for_likelihood_calculation(
+                levels,
+                hierarchy,
+                transition_times,
+                num_states,
+            )
             for levels, hierarchy in cut_trees
         ]
-
-
-
-        exit()
 
         # ====================================================
         # PRIOR
@@ -488,6 +489,7 @@ def main(normalize_root_likelihood: bool | None = None):
 
         result = optimize_parameters(
             trees=trees,
+            datastructure=dats,
             num_states=num_states,
             given_transition_times=(transition_times),
             free_edges=free_edges,
@@ -507,7 +509,6 @@ def main(normalize_root_likelihood: bool | None = None):
             normalize_root_likelihood=normalize_root_likelihood,
             shared_sampling_rate=args.shared_sampling_rate,
         )
-
         # ====================================================
         # PRINT RESULT
         # ====================================================

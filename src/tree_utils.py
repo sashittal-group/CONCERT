@@ -429,6 +429,11 @@ def cut_tree(
 
     Each level stores the nodes between the current cut and the next lower cut,
     so deeper levels do not inherit nodes from shallower levels.
+
+    Edges that cross a cut are split at the cut point: a new node carrying the
+    node attribute ``cut=True`` is inserted at the cut time. The cut node is
+    added as a leaf of the subtree above the cut and, under the same name, as
+    the root of the descendant subtree below the cut.
     """
 
     if not cut_times:
@@ -441,8 +446,7 @@ def cut_tree(
     if root not in tree:
         raise ValueError(f"Root {root} is not present in the tree.")
 
-    cuts = sorted(float(t) for t in cut_times)
-    cuts_desc = cuts[::-1]
+    cuts_desc = sorted({float(t) for t in cut_times}, reverse=True)
     node_times = {node: float(data["T"]) for node, data in tree.nodes(data=True)}
 
     for u, v in tree.edges():
@@ -465,9 +469,44 @@ def cut_tree(
             stack.extend(tree.successors(node))
         return seen
 
+    def cut_node_name(u: int, v: int, cut_time: float) -> str:
+        return f"cut_{u}_{v}_{cut_time}"
+
+    def add_cut_node(
+        subgraph: nx.DiGraph,
+        u: int,
+        v: int,
+        cut_time: float,
+        is_leaf: bool,
+    ) -> str:
+        name = cut_node_name(u, v, cut_time)
+        subgraph.add_node(
+            name,
+            T=float(cut_time),
+            is_leaf=is_leaf,
+            state=tree.nodes[v].get("state"),
+            cut=True,
+        )
+        return name
+
+    def crossing_edges(cut_time: float) -> list[tuple[int, int]]:
+        return [
+            (u, v)
+            for u, v in tree.edges()
+            if node_times[u] > cut_time >= node_times[v]
+        ]
+
     level_trees: list[list[nx.DiGraph]] = [[] for _ in range(len(cuts_desc) + 1)]
     hierarchy = nx.DiGraph()
-    subtree_key_by_root: dict[int, tuple[int, int]] = {}
+
+    # Maps a cut node name to the hierarchy key of the tree in which the
+    # cut node appears as a leaf at the lower boundary of that tree.
+    cut_leaf_key = {}
+
+    # --------------------------------------------------------
+    # Level 0: nodes above the highest cut, plus cut nodes at
+    # the cut points of every edge crossing the cut.
+    # --------------------------------------------------------
 
     top_cut = cuts_desc[0]
     top_nodes = {node for node, T in node_times.items() if T > top_cut}
@@ -478,12 +517,19 @@ def cut_tree(
         )
 
     top_tree = tree.subgraph(top_nodes).copy()
+
+    root_key = (0, root)
+
+    for u, v in crossing_edges(top_cut):
+        name = add_cut_node(top_tree, u, v, top_cut, is_leaf=True)
+        top_tree.add_edge(u, name, length=node_times[u] - top_cut)
+        cut_leaf_key[name] = root_key
+
     top_tree.graph["root"] = root
     top_tree.graph["cut_time"] = top_cut
     top_tree.graph["level"] = 0
     level_trees[0].append(top_tree)
 
-    root_key = (0, root)
     hierarchy.add_node(
         root_key,
         level=0,
@@ -491,62 +537,165 @@ def cut_tree(
         cut_time=top_cut,
         tree=top_tree,
     )
-    subtree_key_by_root[root] = root_key
+
+    # --------------------------------------------------------
+    # Levels 1..len(cuts): subtrees below each cut, rooted at
+    # the cut node of the edge crossing the cut.
+    # --------------------------------------------------------
 
     for level, cut_time in enumerate(cuts_desc):
         next_cut = cuts_desc[level + 1] if level + 1 < len(cuts_desc) else None
 
-        frontier_children = sorted(
-            {
-                child
-                for parent, child in tree.edges()
-                if node_times[parent] > cut_time >= node_times[child]
-            }
-        )
-
-        for child in frontier_children:
+        for u, v in crossing_edges(cut_time):
             allowed = {
                 node
-                for node in descendants(child)
+                for node in descendants(v)
                 if next_cut is None or node_times[node] > next_cut
             }
-            if not allowed:
-                continue
 
             subtree = tree.subgraph(allowed).copy()
-            subtree.graph["root"] = child
+
+            # The cut node on edge (u, v) is the root of the descendant
+            # subtree, shared under the same name with the parent subtree.
+            root_name = add_cut_node(subtree, u, v, cut_time, is_leaf=False)
+            if v in allowed:
+                subtree.add_edge(
+                    root_name,
+                    v,
+                    length=cut_time - node_times[v],
+                )
+
+            child_key = (level + 1, cut_node_name(u, v, cut_time))
+
+            # Cut nodes at the lower boundary of this slab.
+            if next_cut is not None:
+                for x, y in crossing_edges(next_cut):
+                    if x in allowed:
+                        name = add_cut_node(
+                            subtree, x, y, next_cut, is_leaf=True
+                        )
+                        subtree.add_edge(
+                            x, name, length=node_times[x] - next_cut
+                        )
+                        cut_leaf_key[name] = child_key
+                    elif x == u and y == v:
+                        # The root segment itself crosses the lower cut.
+                        name = add_cut_node(
+                            subtree, x, y, next_cut, is_leaf=True
+                        )
+                        subtree.add_edge(
+                            root_name, name, length=cut_time - next_cut
+                        )
+                        cut_leaf_key[name] = child_key
+
+            subtree.graph["root"] = root_name
             subtree.graph["cut_time"] = cut_time
             subtree.graph["level"] = level + 1
             level_trees[level + 1].append(subtree)
 
-            child_key = (level + 1, child)
             hierarchy.add_node(
                 child_key,
                 level=level + 1,
-                root=child,
+                root=root_name,
                 cut_time=cut_time,
                 tree=subtree,
             )
-
-            parent_key = root_key
-            current = child
-            while current != root:
-                parent = next(tree.predecessors(current))
-                if parent in subtree_key_by_root:
-                    parent_key = subtree_key_by_root[parent]
-                    break
-                current = parent
-
-            hierarchy.add_edge(parent_key, child_key)
-            subtree_key_by_root[child] = child_key
+            # The parent is the tree in which this subtree's root cut node
+            # appears as a leaf at the lower boundary.
+            hierarchy.add_edge(cut_leaf_key[root_name], child_key)
 
     for trees in level_trees:
-        trees.sort(key=lambda g: g.graph["root"])
+        trees.sort(key=lambda g: str(g.graph["root"]))
 
     return level_trees, hierarchy
 
 
 def get_datastructure_for_likelihood_calculation(
-    levels: list[list[nx.DiGraph]], hierarchy: nx.DiGraph
+    levels: list[list[nx.DiGraph]],
+    hierarchy: nx.DiGraph,
+    cut_times: list[float],
+    num_states: int,
 ):
-    pass
+    level_ds = []
+
+    for level in levels:
+        ds = {}
+        num_births_of_level_trees = []
+        num_sampling_of_level_trees = []
+        sampling_state_counts_of_level_trees = []
+        start_times_of_level_trees = []
+        end_times_of_level_trees = []
+        
+        for tree in level:
+            num_births = 0
+            sampling_state_counts = np.zeros(num_states, dtype=np.int64)
+
+            for n, d in tree.nodes(data=True):
+                if d.get("cut") is None:
+                    if d["is_leaf"]:
+                        state = int(d["state"])
+                        if not 0 <= state < num_states:
+                            raise ValueError(
+                                f"Leaf state {state} is outside [0, {num_states})."
+                            )
+                        sampling_state_counts[state] += 1
+                    elif n != tree.graph["root"]:
+                        num_births += 1
+
+            num_sampling = int(sampling_state_counts.sum())
+            num_births_of_level_trees.append(num_births)
+            num_sampling_of_level_trees.append(num_sampling)
+            sampling_state_counts_of_level_trees.append(sampling_state_counts)
+
+            start_times = []
+            end_times = []
+
+            for u, v in tree.edges():
+                start_time = tree.nodes[u]["T"]
+                end_time = tree.nodes[v]["T"]
+                start_times.append(start_time)
+                end_times.append(end_time)
+
+            start_times_of_level_trees.append(start_times)
+            end_times_of_level_trees.append(end_times)
+
+        edge_matrix = np.zeros((len(level), sum(len(st) for st in start_times_of_level_trees)))
+        cum_start_times = 0
+        for tree_idx, tree in enumerate(level):
+            edge_matrix[tree_idx, cum_start_times:cum_start_times + len(start_times_of_level_trees[tree_idx])] = 1
+            cum_start_times += len(start_times_of_level_trees[tree_idx])
+            
+        
+        ds["num_births"] = torch.as_tensor(num_births_of_level_trees)
+        ds["num_sampling"] = torch.as_tensor(num_sampling_of_level_trees)
+        ds["num_sampling_by_state"] = torch.as_tensor(
+            np.asarray(sampling_state_counts_of_level_trees, dtype=np.int64)
+        )
+        ds["start_times"] = torch.as_tensor([st for st_list in start_times_of_level_trees for st in st_list])
+        ds["end_times"] = torch.as_tensor([et for et_list in end_times_of_level_trees for et in et_list])
+        ds["edge_matrix"] = torch.as_tensor(edge_matrix)
+
+        level_ds.append(ds)
+
+    for i in range(len(levels) - 1):
+        
+        current_level_tree_indices = {}
+        for idx, tree in enumerate(levels[i]):
+            current_level_tree_indices[tree.graph["root"]] = idx
+        next_level_tree_indices = {}
+        for idx, tree in enumerate(levels[i + 1]):
+            next_level_tree_indices[tree.graph["root"]] = idx
+
+        transition_matrix = np.zeros((len(current_level_tree_indices), len(next_level_tree_indices)))
+
+        for u, v in hierarchy.edges():
+            if u[0] == i and v[0] == i + 1 and \
+                u[1] in current_level_tree_indices and v[1] in next_level_tree_indices:
+                
+                transition_matrix[current_level_tree_indices[u[1]], next_level_tree_indices[v[1]]] = 1
+
+        level_ds[i]["transition_matrix"] = torch.as_tensor(transition_matrix)
+
+    print(level_ds)
+    
+    return level_ds
