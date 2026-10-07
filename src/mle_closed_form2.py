@@ -133,8 +133,8 @@ class PhylodynamicParameters(nn.Module):
         given_death_rates=None,
         initial_sampling_probabilities=None,
         initial_transition_probabilities=None,
-        max_birth_rate: float = 20.0,
-        max_death_rate: float = 10.0,
+        max_birth_rate: float = 50.0,
+        max_death_rate: float = 20.0,
         shared_sampling_rate: bool = False,
     ):
         super().__init__()

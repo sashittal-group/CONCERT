@@ -1001,9 +1001,10 @@ def add_node_times(cell_lineage_T, root=0, reverse=True):
     distances = nx.single_source_dijkstra_path_length(
         cell_lineage_T, root, weight="length"
     )
+    max_distance = max(distances.values())
     for node, dist in distances.items():
         if reverse:
-            cell_lineage_T.nodes[node]["T"] = max(1 - dist, 0)
+            cell_lineage_T.nodes[node]["T"] = max_distance - dist
         else:
             cell_lineage_T.nodes[node]["T"] = dist
 

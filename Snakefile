@@ -9,6 +9,7 @@ setting_root = "data/simulation/coord_diff"
 setting_ids = glob_wildcards(f"{setting_root}/setting_{{setting}}/setting.txt").setting
 transition_edges_file = "src/transition_edges.txt"
 transition_times_file = "transition.txt"
+kptracer_root = "data/KPTracer-Data/processed_data"
 tls_root = "data/troupe/TLS"
 tls_tree_root = f"{tls_root}/subtrees_kept_states"
 tls_nodes_files = sorted(Path(tls_tree_root).rglob("nodes.csv"))
@@ -57,8 +58,9 @@ rule all:
         #     setting=setting_ids,
         #     batch=batch_indices,
         # ),
-        # f"{tls_root}/inference.out",
+        f"{tls_root}/inference.out",
         f"{tlsc_root}/inference.out",
+        # f"{kptracer_root}/inference.out",
 
 
 rule simulate:
@@ -182,6 +184,41 @@ rule infer_tlsc:
         stderr=f"{tlsc_root}/inference.stderr.log",
     benchmark:
         f"{tlsc_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_kptracer:
+    input:
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transition_edges=f"{kptracer_root}/transition-edges.txt",
+        transition_times=f"{kptracer_root}/transition-times.txt",
+    output:
+        out=f"{kptracer_root}/inference.out",
+    params:
+        tree_directory=kptracer_root,
+        num_trees=1,
+        num_states=5,
+    log:
+        optimization=f"{kptracer_root}/inference.log",
+        stdout=f"{kptracer_root}/inference.stdout.log",
+        stderr=f"{kptracer_root}/inference.stderr.log",
+    benchmark:
+        f"{kptracer_root}/inference.benchmark",
     shell:
         "job_tmp=$(mktemp -d) && "
         "trap 'rm -rf \"$job_tmp\"' EXIT && "
