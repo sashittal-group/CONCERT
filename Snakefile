@@ -58,9 +58,9 @@ rule all:
         #     setting=setting_ids,
         #     batch=batch_indices,
         # ),
-        f"{tls_root}/inference.out",
-        f"{tlsc_root}/inference.out",
-        # f"{kptracer_root}/inference.out",
+        # f"{tls_root}/inference.out",
+        # f"{tlsc_root}/inference.out",
+        f"{kptracer_root}/inference.out",
 
 
 rule simulate:

@@ -365,8 +365,10 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
 def main():
     if __package__:
         from .plotters import plot_simulated_lineage_tree
+        from .likelihood import add_node_times
     else:
         from plotters import plot_simulated_lineage_tree
+        from likelihood import add_node_times
 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.join(
@@ -378,7 +380,7 @@ def main():
     )
     os.makedirs(output_dir, exist_ok=True)
 
-    birth_rates = {"A": 6, "B": 4}
+    birth_rates = {"A": 7, "B": 6}
     death_rates = {"A": 1.5, "B": 0.5}
     sampling_rates = {"A": 0.5, "B": 0.4}
     Q = pd.DataFrame(
@@ -393,6 +395,7 @@ def main():
     seed = 0
 
     while saved_count < tree_count:
+        print(seed)
         if seed >= 1000:
             raise RuntimeError(
                 f"Generated only {saved_count} sampled trees after 1000 attempts"
@@ -409,6 +412,8 @@ def main():
         )
         seed += 1
 
+        graph = add_node_times(graph, root=root)
+        
         extant_tree = filter_extant_lineages(graph, root)
         if not any(
             extant_tree.nodes[node].get("event") == "sample"
@@ -417,8 +422,6 @@ def main():
             continue
 
         exported_tree, transitions = contract_edges(extant_tree, root)
-        for node, data in exported_tree.nodes(data=True):
-            data["T"] = data["time"]
 
         tree_dir = os.path.join(output_dir, f"tree_{saved_count + 1:03d}")
         os.makedirs(tree_dir, exist_ok=True)

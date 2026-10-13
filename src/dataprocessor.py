@@ -113,10 +113,10 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from src.dtos import (
-    Node,
-    Edge,
-)
+if __package__:
+    from .dtos import Edge, Node
+else:
+    from dtos import Edge, Node
 
 
 # ============================================================
