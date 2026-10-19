@@ -60,7 +60,7 @@ rule all:
         # ),
         # f"{tls_root}/inference.out",
         # f"{tlsc_root}/inference.out",
-        f"{kptracer_root}/inference.out",
+        f"{kptracer_root}/inference_per_edge.out",
 
 
 rule simulate:
@@ -233,6 +233,48 @@ rule infer_kptracer:
         "--output {output.out:q} --log {log.optimization:q} "
         "--device cpu --optimizer adam --normalize-root-likelihood "
         "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_kptracer_per_edge:
+    input:
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transition_edges=f"{kptracer_root}/transition-edges.txt",
+        transition_times=f"{kptracer_root}/transition-times.txt",
+        per_edge_transition_times=f"{kptracer_root}/transitions_0_adjusted.csv",
+    output:
+        out=f"{kptracer_root}/inference_per_edge.out",
+    params:
+        tree_directory=kptracer_root,
+        num_trees=1,
+        num_states=5,
+        per_edge_transition_times_pattern=lambda wildcards: (
+            f"{kptracer_root}/transitions_{{index}}_adjusted.csv"
+        ),
+    log:
+        optimization=f"{kptracer_root}/inference_per_edge.log",
+        stdout=f"{kptracer_root}/inference_per_edge.stdout.log",
+        stderr=f"{kptracer_root}/inference_per_edge.stderr.log",
+    benchmark:
+        f"{kptracer_root}/inference_per_edge.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2_given_transitions {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{params.per_edge_transition_times_pattern:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--fixed-shared-sampling-probability 0.05"
+        # "--shared-sampling-rate "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 

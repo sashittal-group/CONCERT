@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+import math
 from typing import Sequence
 
 import numpy as np
@@ -497,6 +498,8 @@ def cut_tree(
             T=float(cut_time),
             is_leaf=is_leaf,
             state=tree.nodes[v].get("state"),
+            cut_edge=(u, v),
+            edge_parent_state=tree.nodes[u].get("state", -1),
             cut=True,
         )
         return name
@@ -627,6 +630,9 @@ def get_datastructure_for_likelihood_calculation(
     hierarchy: nx.DiGraph,
     cut_times: list[float],
     num_states: int,
+    per_edge_transition_data: dict[
+        tuple[int, int], list[tuple[int, int, float]]
+    ] | None = None,
 ):
     level_ds = []
 
@@ -637,10 +643,40 @@ def get_datastructure_for_likelihood_calculation(
         sampling_state_counts_of_level_trees = []
         start_times_of_level_trees = []
         end_times_of_level_trees = []
+        fixed_states_of_level_trees = []
         
         for tree in level:
             num_births = 0
             sampling_state_counts = np.zeros(num_states, dtype=np.int64)
+
+            if per_edge_transition_data is not None:
+                root_data = tree.nodes[tree.graph["root"]]
+                cut_edge = root_data.get("cut_edge")
+                if cut_edge is None:
+                    fixed_state = int(root_data.get("state", -1))
+                else:
+                    fixed_state = int(root_data.get("edge_parent_state", -1))
+                    events = per_edge_transition_data.get(cut_edge, [])
+                    if fixed_state < 0 and events:
+                        fixed_state = events[0][0]
+
+                    cut_time = float(root_data["T"])
+                    for source_state, target_state, event_time in events:
+                        if event_time > cut_time or math.isclose(
+                            event_time, cut_time, rel_tol=1e-9, abs_tol=1e-12
+                        ):
+                            if fixed_state != source_state:
+                                raise ValueError(
+                                    f"Discontinuous state history on edge "
+                                    f"{cut_edge[0]}->{cut_edge[1]} at time {event_time}"
+                                )
+                            fixed_state = target_state
+                        else:
+                            break
+
+                if not 0 <= fixed_state < num_states:
+                    fixed_state = -1
+                fixed_states_of_level_trees.append(fixed_state)
 
             for n, d in tree.nodes(data=True):
                 if d.get("cut") is None:
@@ -689,6 +725,10 @@ def get_datastructure_for_likelihood_calculation(
         ds["end_times"] = torch.as_tensor([et for et_list in end_times_of_level_trees for et in et_list])
         ds["edge_matrix"] = torch.as_tensor(edge_matrix)
         ds["transition_times"] = tuple(float(t) for t in cut_times)
+        if per_edge_transition_data is not None:
+            ds["fixed_states"] = torch.as_tensor(
+                fixed_states_of_level_trees, dtype=torch.int64
+            )
 
         level_ds.append(ds)
 
