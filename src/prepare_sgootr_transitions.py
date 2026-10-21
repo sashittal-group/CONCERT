@@ -45,6 +45,12 @@ def convert_transitions(
 ) -> tuple[list[dict[str, int | float]], list[float]]:
     node_times = read_nodes(nodes_path)
     tree_edges = read_edges(edges_path)
+    roots = set(node_times).difference(child for _, child in tree_edges)
+    if len(roots) != 1:
+        raise ValueError(
+            f"Expected one root in {nodes_path} and {edges_path}; found {len(roots)}."
+        )
+    inference_root = roots.pop()
     required_columns = {
         "parent",
         "child",
@@ -67,9 +73,11 @@ def convert_transitions(
 
         for line_number, row in enumerate(reader, start=2):
             try:
-                # MACH2's origin IDs are one-based; inference tree IDs are zero-based.
+                # MACH2 uses one-based origin IDs and -1 for the synthetic root parent.
                 parent = int(row["parent"]) - 1
                 child = int(row["child"]) - 1
+                if parent == -1:
+                    parent = inference_root
                 state_0 = STATE_IDS[row["state_0"]]
                 state_1 = STATE_IDS[row["state_1"]]
                 interval_start = float(row["interval_start"])

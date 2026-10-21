@@ -899,6 +899,7 @@ def optimize_parameters(
             LL = calculate_total_log_likelihood(
                 params=params,
                 trees=trees,
+                datastructures=datastructure,
                 normalize_root_likelihood=normalize_root_likelihood,
             )
 
