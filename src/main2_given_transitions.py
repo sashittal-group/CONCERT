@@ -426,7 +426,8 @@ def main(normalize_root_likelihood: bool | None = None):
             0.0 < args.fixed_shared_sampling_probability < 1.0
         ):
             raise ValueError(
-                "--fixed-shared-sampling-probability must be between 0 and 1."
+                "--fixed-shared-sampling-probability must be strictly between "
+                "0 and 1."
             )
         if args.shared_sampling_rate:
             raise ValueError(

@@ -132,6 +132,7 @@ class PhylodynamicParameters(nn.Module):
         initial_death_rates=None,
         given_death_rates=None,
         initial_sampling_probabilities=None,
+        given_sampling_probabilities=None,
         initial_transition_probabilities=None,
         max_birth_rate: float = 1000.0,
         max_death_rate: float = 500.0,
@@ -244,28 +245,53 @@ class PhylodynamicParameters(nn.Module):
         # SAMPLING PROBABILITIES
         # ====================================================
 
-        initial_sampling = torch.as_tensor(
-            initial_sampling_probabilities,
-            dtype=torch.get_default_dtype(),
-            device=device,
-        )
-
-        if initial_sampling.numel() != num_states:
-            raise ValueError(
-                "initial_sampling_probabilities must " "have length num_states"
+        if given_sampling_probabilities is not None:
+            if shared_sampling_rate:
+                raise ValueError(
+                    "given_sampling_probabilities cannot be combined with "
+                    "shared_sampling_rate."
+                )
+            fixed_sampling = torch.as_tensor(
+                given_sampling_probabilities,
+                dtype=torch.get_default_dtype(),
+                device=device,
+            )
+            if fixed_sampling.numel() != num_states:
+                raise ValueError(
+                    "given_sampling_probabilities must have length num_states"
+                )
+            if not torch.isfinite(fixed_sampling).all() or torch.any(
+                (fixed_sampling < 0.0) | (fixed_sampling > 1.0)
+            ):
+                raise ValueError(
+                    "given_sampling_probabilities must be finite values in [0, 1]"
+                )
+            self.register_buffer("fixed_sampling_probabilities", fixed_sampling)
+        else:
+            initial_sampling = torch.as_tensor(
+                initial_sampling_probabilities,
+                dtype=torch.get_default_dtype(),
+                device=device,
             )
 
-        initial_sampling = torch.clamp(
-            initial_sampling,
-            1e-8,
-            1.0 - 1e-8,
-        )
+            if initial_sampling.numel() != num_states:
+                raise ValueError(
+                    "initial_sampling_probabilities must " "have length num_states"
+                )
 
-        if shared_sampling_rate:
-            initial_shared_sampling = initial_sampling.mean().reshape(1)
-            self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_shared_sampling))
-        else:
-            self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_sampling))
+            initial_sampling = torch.clamp(
+                initial_sampling,
+                1e-8,
+                1.0 - 1e-8,
+            )
+
+            if shared_sampling_rate:
+                initial_shared_sampling = initial_sampling.mean().reshape(1)
+                self.sampling_raw = nn.Parameter(
+                    inverse_sigmoid(initial_shared_sampling)
+                )
+            else:
+                self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_sampling))
 
         # ====================================================
         # TRANSITION PROBABILITIES
@@ -367,6 +393,9 @@ class PhylodynamicParameters(nn.Module):
     def sampling_probabilities(
         self,
     ) -> torch.Tensor:
+        if hasattr(self, "fixed_sampling_probabilities"):
+            return self.fixed_sampling_probabilities
+
         probabilities = torch.sigmoid(self.sampling_raw)
         if self.shared_sampling_rate:
             return probabilities.expand(self.num_states)
@@ -658,6 +687,7 @@ def optimize_parameters(
         initial_death_rates=(initial_death_rates),
         given_death_rates=(given_death_rates),
         initial_sampling_probabilities=(initial_sampling_probabilities),
+        given_sampling_probabilities=(given_sampling_probabilities),
         initial_transition_probabilities=(initial_transition_probabilities),
         given_transition_times=(given_transition_times),
         shared_sampling_rate=shared_sampling_rate,

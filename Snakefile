@@ -24,6 +24,7 @@ tls_transition_edges_file = "data/troupe/transition-edges.txt"
 tls_transition_times_file = "data/troupe/transition-times.txt"
 tlsc_root = "data/troupe/TLSC"
 tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
+sgootr_root = "data/sgootr/inference"
 tlsc_nodes_files = sorted(Path(tlsc_tree_root).rglob("nodes.csv"))
 tlsc_tree_pairs = [
     (nodes_file, nodes_file.with_name("edges.csv"))
@@ -60,7 +61,8 @@ rule all:
         # ),
         # f"{tls_root}/inference.out",
         # f"{tlsc_root}/inference.out",
-        f"{kptracer_root}/inference_per_edge.out",
+        # f"{kptracer_root}/inference_per_edge.out",
+        f"{sgootr_root}/inference_per_edge.out",
 
 
 rule simulate:
@@ -162,7 +164,7 @@ rule infer_tls:
         "--transition-times-file {input.transition_times:q} "
         "--output {output.out:q} --log {log.optimization:q} "
         "--device cpu --optimizer adam --normalize-root-likelihood "
-        "--shared-sampling-rate "
+        # "--shared-sampling-rate "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 
@@ -198,6 +200,99 @@ rule infer_tlsc:
         "--output {output.out:q} --log {log.optimization:q} "
         "--device cpu --optimizer adam --normalize-root-likelihood "
         "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_sgootr:
+    input:
+        nodes=f"{sgootr_root}/nodes.csv",
+        edges=f"{sgootr_root}/edges.csv",
+        transition_edges=f"{sgootr_root}/transition_edges.txt",
+        transition_times=f"{sgootr_root}/transition-times.txt",
+    output:
+        out=f"{sgootr_root}/inference.out",
+    params:
+        tree_directory=sgootr_root,
+        num_trees=1,
+        num_states=3,
+    log:
+        optimization=f"{sgootr_root}/inference.log",
+        stdout=f"{sgootr_root}/inference.stdout.log",
+        stderr=f"{sgootr_root}/inference.stderr.log",
+    benchmark:
+        f"{sgootr_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        # "--shared-sampling-rate "
+        "--fixed-shared-sampling-probability 0.05 "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule prepare_sgootr_per_edge_transitions:
+    input:
+        transitions="data/sgootr/CRC11_transitions.csv",
+        nodes=f"{sgootr_root}/nodes.csv",
+        edges=f"{sgootr_root}/edges.csv",
+    output:
+        transitions=f"{sgootr_root}/transitions_0_adjusted.csv",
+        transition_times=f"{sgootr_root}/transition-times-per-edge.txt",
+    shell:
+        "python -m src.prepare_sgootr_transitions "
+        "--transitions {input.transitions:q} "
+        "--nodes {input.nodes:q} --edges {input.edges:q} "
+        "--output {output.transitions:q} "
+        "--transition-times-output {output.transition_times:q}"
+
+
+rule infer_sgootr_per_edge:
+    input:
+        nodes=f"{sgootr_root}/nodes.csv",
+        edges=f"{sgootr_root}/edges.csv",
+        transition_edges=f"{sgootr_root}/transition_edges.txt",
+        transition_times=f"{sgootr_root}/transition-times-per-edge.txt",
+        per_edge_transition_times=f"{sgootr_root}/transitions_0_adjusted.csv",
+    output:
+        out=f"{sgootr_root}/inference_per_edge.out",
+    params:
+        tree_directory=sgootr_root,
+        num_trees=1,
+        num_states=3,
+        per_edge_transition_times_pattern=lambda wildcards: (
+            f"{sgootr_root}/transitions_{{index}}_adjusted.csv"
+        ),
+    log:
+        optimization=f"{sgootr_root}/inference_per_edge.log",
+        stdout=f"{sgootr_root}/inference_per_edge.stdout.log",
+        stderr=f"{sgootr_root}/inference_per_edge.stderr.log",
+    benchmark:
+        f"{sgootr_root}/inference_per_edge.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2_given_transitions {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{params.per_edge_transition_times_pattern:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--fixed-shared-sampling-probability 0.05 "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 

@@ -99,6 +99,13 @@ def parse_args():
         help="Use one learned sampling probability shared by all states.",
     )
 
+    parser.add_argument(
+        "--fixed-shared-sampling-probability",
+        type=float,
+        default=None,
+        help="Fix the sampling probability to this value for every state.",
+    )
+
     # --------------------------------------------------------
     # PyTorch-specific options
     # --------------------------------------------------------
@@ -380,6 +387,20 @@ def write_result(
 def main(normalize_root_likelihood: bool | None = None):
 
     args = parse_args()
+    if args.fixed_shared_sampling_probability is not None:
+        if not math.isfinite(args.fixed_shared_sampling_probability) or not (
+            0.0 < args.fixed_shared_sampling_probability < 1.0
+        ):
+            raise ValueError(
+                "--fixed-shared-sampling-probability must be strictly between "
+                "0 and 1."
+            )
+        if args.shared_sampling_rate:
+            raise ValueError(
+                "--fixed-shared-sampling-probability cannot be combined with "
+                "--shared-sampling-rate."
+            )
+
     if normalize_root_likelihood is None:
         normalize_root_likelihood = args.normalize_root_likelihood
 
@@ -556,6 +577,11 @@ def main(normalize_root_likelihood: bool | None = None):
             initial_birth_rates=(initial_birth_rates),
             initial_death_rates=(initial_death_rates),
             initial_sampling_probabilities=(initial_sampling_probabilities),
+            given_sampling_probabilities=(
+                [args.fixed_shared_sampling_probability] * num_states
+                if args.fixed_shared_sampling_probability is not None
+                else None
+            ),
             initial_transition_probabilities=(initial_transition_probabilities),
             # given_death_rates=(given_death_rates),
             # given_birth_rates=(given_birth_rates),
