@@ -11,6 +11,8 @@ __pycache__/
 *.DS_Store
 .ipynb_checkpoints/
 .vscode/
+.pytest_cache/
 
 
 torchinductor_samin/
+dump/

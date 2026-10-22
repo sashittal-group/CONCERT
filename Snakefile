@@ -112,6 +112,11 @@ if len(tls_tree_pairs) != len(tls_nodes_files):
     raise ValueError(f"Some TLS node files have no matching edges file in {tls_tree_root}")
 tls_transition_edges_file = "data/troupe/transition-edges.txt"
 tls_transition_times_file = "data/troupe/transition-times.txt"
+tls_transition_counts = (5, 10, 20, 50, 100)
+tls_transition_inference_outputs = [
+    f"{tls_root}/inference_transition_times_{count}.out"
+    for count in tls_transition_counts
+]
 tlsc_root = "data/troupe/TLSC"
 tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
 sgootr_root = "data/sgootr/inference"
@@ -155,11 +160,12 @@ rule all:
         # f"{tlsc_root}/inference.out",
         # f"{kptracer_root}/inference_per_edge.out",
         # f"{sgootr_root}/inference_per_edge.out",
-        f"{sgootr_transition_anchored_root}/inference_result.txt",
-        f"{sgootr_birth_shifted_root}/inference_result.txt",
-        tls_composite_plot_outputs,
-        sgootr_profile_plot_outputs,
-        kptracer_profile_plot_outputs,
+        # f"{sgootr_transition_anchored_root}/inference_result.txt",
+        # f"{sgootr_birth_shifted_root}/inference_result.txt",
+        tls_transition_inference_outputs,
+        # tls_composite_plot_outputs,
+        # sgootr_profile_plot_outputs,
+        # kptracer_profile_plot_outputs,
 
 
 rule tls_composite_preprocess:
@@ -490,6 +496,53 @@ rule infer_tls:
         "--output {output.out:q} --log {log.optimization:q} "
         "--device cpu --optimizer adam --normalize-root-likelihood "
         # "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_tls_transition_count:
+    input:
+        nodes=[str(nodes_file) for nodes_file, _ in tls_tree_pairs],
+        edges=[str(edges_file) for _, edges_file in tls_tree_pairs],
+        transition_edges=tls_transition_edges_file,
+        transition_times=lambda wildcards: (
+            f"data/troupe/transition-times-{wildcards.transition_count}.txt"
+        ),
+    output:
+        out=f"{tls_root}/inference_transition_times_{{transition_count}}.out",
+    params:
+        tree_directory=tls_tree_root,
+        num_trees=len(tls_tree_pairs),
+        num_states=3,
+    log:
+        optimization=(
+            f"{tls_root}/inference_transition_times_"
+            "{transition_count}.log"
+        ),
+        stdout=(
+            f"{tls_root}/inference_transition_times_"
+            "{transition_count}.stdout.log"
+        ),
+        stderr=(
+            f"{tls_root}/inference_transition_times_"
+            "{transition_count}.stderr.log"
+        ),
+    benchmark:
+        f"{tls_root}/inference_transition_times_{{transition_count}}.benchmark",
+    wildcard_constraints:
+        transition_count="5|10|20|50|100",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 
