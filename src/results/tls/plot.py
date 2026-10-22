@@ -167,6 +167,22 @@ def _draw_profile_box(
         )
 
 
+def _dataset_offsets(
+    datasets: tuple[str, ...],
+    maximum_offset: float,
+) -> dict[str, float]:
+    if not datasets:
+        return {}
+    if len(datasets) == 1:
+        return {datasets[0]: 0.0}
+    spacing = 2.0 * maximum_offset / (len(datasets) - 1)
+    center = (len(datasets) - 1) / 2.0
+    return {
+        dataset: (index - center) * spacing
+        for index, dataset in enumerate(datasets)
+    }
+
+
 def _plot_panel(
     axis: plt.Axes,
     title: str,
@@ -217,6 +233,7 @@ def _plot_panel(
     )
     box_width = float(plot["box_width"]) * horizontal_scale
     dataset_offset = float(plot["dataset_offset"]) * horizontal_scale
+    dataset_offsets = _dataset_offsets(config.datasets, dataset_offset)
 
     for position, row in enumerate(parameters.itertuples(index=False)):
         if parameter_type == "transition_ratio":
@@ -248,13 +265,8 @@ def _plot_panel(
             group_label = config.state_names[state_index]
         group_labels.append((group_center, group_label))
 
-        for dataset_index, dataset in enumerate(config.datasets):
-            direction = (
-                0.0
-                if len(config.datasets) == 1
-                else (-1.0 if dataset_index == 0 else 1.0)
-            )
-            x_position = group_center + direction * dataset_offset
+        for dataset in config.datasets:
+            x_position = group_center + dataset_offsets[dataset]
             metadata = metadata_by_dataset[dataset]
             matching_metadata = metadata[metadata["parameter"] == row.parameter]
             if len(matching_metadata) != 1:
@@ -341,10 +353,8 @@ def _render_sensitivity(
     ranges: dict[str, pd.DataFrame],
     metadata: dict[str, pd.DataFrame],
 ) -> list[Path]:
-    if not config.datasets or len(config.datasets) > 2:
-        raise ValueError(
-            "The sensitivity plot requires one or two configured datasets"
-        )
+    if not config.datasets:
+        raise ValueError("The sensitivity plot requires at least one dataset")
     figure, axes = plt.subplots(1, 3, figsize=tuple(config.plotting["figsize"]))
     panel_types = config.plotting.get(
         "composite_panel_types",
@@ -589,6 +599,7 @@ def _render_parameter_plot(
         ]
     box_width = float(plot["box_width"])
     dataset_offset = float(plot["dataset_offset"])
+    dataset_offsets = _dataset_offsets(config.datasets, dataset_offset)
 
     figure, axis = plt.subplots(figsize=tuple(plot["parameter_figsize"]))
     axis.set_xlim(*limits)
@@ -610,13 +621,8 @@ def _render_parameter_plot(
                 ),
             )
         )
-        for dataset_index, dataset in enumerate(config.datasets):
-            direction = (
-                0.0
-                if len(config.datasets) == 1
-                else (-1.0 if dataset_index == 0 else 1.0)
-            )
-            x_position = group_center + direction * dataset_offset
+        for dataset in config.datasets:
+            x_position = group_center + dataset_offsets[dataset]
             matching_metadata = metadata_by_dataset[dataset][
                 metadata_by_dataset[dataset]["parameter"] == row.parameter
             ]

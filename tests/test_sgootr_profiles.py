@@ -11,6 +11,7 @@ from src.results.sgootr.preprocess import (
 )
 from src.results.tls.config import load_config
 from src.results.tls.data import DatasetContext
+from src.results.tls.plot import _dataset_offsets
 
 
 class SgootrProfileTests(unittest.TestCase):
@@ -72,6 +73,17 @@ class SgootrProfileTests(unittest.TestCase):
                     torch.ones(3, dtype=torch.float64),
                 )
             )
+
+    def test_dataset_offsets_center_any_number_of_datasets(self) -> None:
+        self.assertEqual(_dataset_offsets(("only",), 0.23), {"only": 0.0})
+        self.assertEqual(
+            _dataset_offsets(("first", "second"), 0.23),
+            {"first": -0.23, "second": 0.23},
+        )
+        self.assertEqual(
+            _dataset_offsets(("first", "middle", "last"), 0.23),
+            {"first": -0.23, "middle": 0.0, "last": 0.23},
+        )
 
 
 if __name__ == "__main__":

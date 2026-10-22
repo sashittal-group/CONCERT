@@ -142,7 +142,10 @@ def export_stage(
     output_dir: Path,
     transitions: tuple[TransitionEvent, ...] | list[TransitionEvent] = (),
     title: str = "SGOOTR tree",
+    transition_time_scale: float = 1.0,
 ) -> dict[str, Path]:
+    if not math.isfinite(transition_time_scale) or transition_time_scale <= 0.0:
+        raise ValueError("transition_time_scale must be finite and positive.")
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "tree": output_dir / "tree.nwk",
@@ -163,8 +166,18 @@ def export_stage(
     _remove_serialized_root_branch(paths["tree"])
     _write_nodes(stage, paths["nodes"])
     _write_edges(stage, paths["edges"])
-    _write_transitions(stage, transitions, paths["transition_times"])
-    _write_transition_times(stage, transitions, paths["transition_times_text"])
+    _write_transitions(
+        stage,
+        transitions,
+        paths["transition_times"],
+        transition_time_scale,
+    )
+    _write_transition_times(
+        stage,
+        transitions,
+        paths["transition_times_text"],
+        transition_time_scale,
+    )
     _plot_stage(stage, transitions, paths["plot"], title)
     return paths
 
@@ -255,6 +268,7 @@ def _write_transitions(
     stage: TreeRepresentation,
     transitions: tuple[TransitionEvent, ...] | list[TransitionEvent],
     path: Path,
+    transition_time_scale: float,
 ) -> None:
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
@@ -262,8 +276,16 @@ def _write_transitions(
         for event in transitions:
             interval_start, interval_end = sorted(
                 (
-                    _inverse_transition_time(event.interval_start, stage.root_age),
-                    _inverse_transition_time(event.interval_end, stage.root_age),
+                    _inverse_transition_time(
+                        event.interval_start,
+                        stage.root_age,
+                        transition_time_scale,
+                    ),
+                    _inverse_transition_time(
+                        event.interval_end,
+                        stage.root_age,
+                        transition_time_scale,
+                    ),
                 )
             )
             writer.writerow(
@@ -275,7 +297,7 @@ def _write_transitions(
                     f"{interval_start:.15g}",
                     f"{interval_end:.15g}",
                     (
-                        f"{_export_transition_time(event.transition_time, stage.root_age):.15g}"
+                        f"{_export_transition_time(event.transition_time, stage.root_age, transition_time_scale):.15g}"
                     ),
                 ]
             )
@@ -285,24 +307,37 @@ def _write_transition_times(
     stage: TreeRepresentation,
     transitions: tuple[TransitionEvent, ...] | list[TransitionEvent],
     path: Path,
+    transition_time_scale: float,
 ) -> None:
     times = sorted(
         {
-            _export_transition_time(event.transition_time, stage.root_age)
+            _export_transition_time(
+                event.transition_time,
+                stage.root_age,
+                transition_time_scale,
+            )
             for event in transitions
         }
     )
     path.write_text("".join(f"{time:.15g}\n" for time in times))
 
 
-def _inverse_transition_time(time: float, maximum_time: float) -> float:
-    return maximum_time - time + TRANSITION_TIME_OFFSET
+def _inverse_transition_time(
+    time: float,
+    maximum_time: float,
+    time_scale: float = 1.0,
+) -> float:
+    return maximum_time - time + TRANSITION_TIME_OFFSET * time_scale
 
 
-def _export_transition_time(time: float, maximum_time: float) -> float:
+def _export_transition_time(
+    time: float,
+    maximum_time: float,
+    time_scale: float = 1.0,
+) -> float:
     return (
-        _inverse_transition_time(time, maximum_time)
-        - TRANSITION_TIME_DECREMENT
+        _inverse_transition_time(time, maximum_time, time_scale)
+        - TRANSITION_TIME_DECREMENT * time_scale
     )
 
 

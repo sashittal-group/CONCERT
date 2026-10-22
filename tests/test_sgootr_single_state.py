@@ -54,6 +54,40 @@ class SingleStatePartitionTests(unittest.TestCase):
                 num_states=2,
             )
 
+    def test_single_state_tree_counts_only_sampled_tips(self) -> None:
+        nodes = {
+            10: Node(10, 2.0, False, -1),
+            0: Node(0, 1.0, False, -1),
+            1: Node(1, 0.0, True, 0, is_sampled=True),
+            2: Node(2, 0.0, True, 0, is_sampled=False),
+        }
+        edges = [Edge(10, 0, 1.0), Edge(0, 1, 1.0), Edge(0, 2, 1.0)]
+        partition = build_partition(nodes, edges, [], num_states=1)
+        self.assertEqual(partition.births, (1,))
+        self.assertEqual(partition.leaves, (1,))
+        self.assertAlmostEqual(partition.exposure[0], 3.0)
+
+    def test_transition_at_edge_endpoint_creates_zero_duration_segment(self) -> None:
+        transitions = [Transition(0, 2, 0, 1, 0.0)]
+        partition = build_partition(
+            self.nodes,
+            self.edges,
+            transitions,
+            num_states=2,
+        )
+        self.assertEqual(partition.node_states[2], 1)
+        self.assertAlmostEqual(partition.exposure[0], 3.0)
+        self.assertAlmostEqual(partition.exposure[1], 0.0)
+        self.assertTrue(
+            any(
+                segment.parent == 0
+                and segment.child == 2
+                and segment.state == 1
+                and segment.start == segment.end == 0.0
+                for segment in partition.segments
+            )
+        )
+
     def test_single_state_likelihood_and_root_u_are_finite(self) -> None:
         partition = build_partition(
             self.nodes,
@@ -71,6 +105,24 @@ class SingleStatePartitionTests(unittest.TestCase):
         (values.sum() - torch.log1p(-root_u)).backward()
         self.assertTrue(torch.isfinite(births.grad).all())
         self.assertTrue(torch.isfinite(deaths.grad).all())
+
+    def test_state_specific_sampling_probabilities_are_differentiable(self) -> None:
+        partition = build_partition(
+            self.nodes,
+            self.edges,
+            self.transitions,
+            num_states=2,
+        )
+        sampling = torch.tensor([0.05, 0.1], requires_grad=True)
+        values = state_log_likelihoods(
+            partition,
+            torch.tensor([4.0, 3.0]),
+            torch.tensor([1.0, 0.5]),
+            sampling,
+        )
+        values.sum().backward()
+        self.assertTrue(torch.isfinite(sampling.grad).all())
+        self.assertTrue((sampling.grad != 0).all())
 
     def test_stable_form_matches_single_state_closed_form(self) -> None:
         birth = torch.tensor(4.0)

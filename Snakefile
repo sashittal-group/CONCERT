@@ -3,6 +3,7 @@ configfile: "src/results/sgootr/config.yaml"
 configfile: "src/results/kptracer/config.yaml"
 
 from pathlib import Path
+import sys
 
 tls_composite_config_dir = Path("src/results/tls")
 
@@ -120,6 +121,18 @@ tls_transition_inference_outputs = [
 tlsc_root = "data/troupe/TLSC"
 tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
 sgootr_root = "data/sgootr/inference"
+sgootr_upgma_root = "data/sgootr/processed/upgma"
+sgootr_upgma_min_subtracted_root = "data/sgootr/processed/upgma_min_subtracted"
+sgootr_upgma_min_subtracted_height_1_root = (
+    "data/sgootr/processed/upgma_min_subtracted_height_1"
+)
+sgootr_upgma_min_subtracted_height_1_transition_cut_root = (
+    "data/sgootr/processed/"
+    "upgma_min_subtracted_height_1_transition_cut_upgma"
+)
+sgootr_upgma_min_subtracted_eps_root = (
+    "data/sgootr/processed/upgma_min_subtracted_eps_1e-4"
+)
 sgootr_transition_anchored_root = "data/sgootr/processed/transition_anchored"
 sgootr_birth_shifted_root = "data/sgootr/processed/birth_shifted_min_branch"
 tlsc_nodes_files = sorted(Path(tlsc_tree_root).rglob("nodes.csv"))
@@ -289,8 +302,10 @@ rule sgootr_profile_preprocess:
             / "{dataset}"
             / sgootr_profile_files["metadata"]
         ),
+    params:
+        python=sys.executable,
     shell:
-        "python -m src.results.sgootr.preprocess "
+        "{params.python:q} -m src.results.sgootr.preprocess "
         "--config {input.settings:q} --dataset {wildcards.dataset:q}"
 
 
@@ -320,8 +335,10 @@ rule sgootr_profile_plot:
         ),
     output:
         sgootr_profile_plot_outputs,
+    params:
+        python=sys.executable,
     shell:
-        "python -m src.results.sgootr.plot --config {input.settings:q}"
+        "{params.python:q} -m src.results.sgootr.plot --config {input.settings:q}"
 
 
 rule kptracer_profile_preprocess:
@@ -617,6 +634,155 @@ rule infer_sgootr:
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 
+rule preprocess_sgootr_upgma:
+    input:
+        tree="data/sgootr/processed/input/tree.nwk",
+        code=[
+            "src/process_data/sgootr/upgma.py",
+            "src/process_data/sgootr/transitions.py",
+            "src/process_data/sgootr/tree.py",
+            "src/process_data/sgootr/executables.py",
+        ],
+    output:
+        tree=f"{sgootr_upgma_root}/tree.nwk",
+        distance_matrix=f"{sgootr_upgma_root}/distance_matrix.csv",
+        nodes=f"{sgootr_upgma_root}/nodes.csv",
+        edges=f"{sgootr_upgma_root}/edges.csv",
+        transition_times=f"{sgootr_upgma_root}/transition_times.csv",
+        transition_times_text=f"{sgootr_upgma_root}/transition_times.txt",
+        plot=f"{sgootr_upgma_root}/tree.png",
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.process_data.sgootr.upgma "
+        "--input-tree {input.tree:q} --output-dir {sgootr_upgma_root:q}"
+
+
+rule preprocess_sgootr_upgma_min_subtracted:
+    input:
+        tree="data/sgootr/processed/input/tree.nwk",
+        code=[
+            "src/process_data/sgootr/upgma.py",
+            "src/process_data/sgootr/transitions.py",
+            "src/process_data/sgootr/tree.py",
+            "src/process_data/sgootr/executables.py",
+        ],
+    output:
+        tree=f"{sgootr_upgma_min_subtracted_root}/tree.nwk",
+        distance_matrix=f"{sgootr_upgma_min_subtracted_root}/distance_matrix.csv",
+        nodes=f"{sgootr_upgma_min_subtracted_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_root}/edges.csv",
+        transition_times=f"{sgootr_upgma_min_subtracted_root}/transition_times.csv",
+        transition_times_text=f"{sgootr_upgma_min_subtracted_root}/transition_times.txt",
+        plot=f"{sgootr_upgma_min_subtracted_root}/tree.png",
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.process_data.sgootr.upgma "
+        "--input-tree {input.tree:q} "
+        "--output-dir {sgootr_upgma_min_subtracted_root:q} "
+        "--subtract-minimum-distance"
+
+
+rule preprocess_sgootr_upgma_min_subtracted_height_1:
+    input:
+        tree="data/sgootr/processed/input/tree.nwk",
+        code=[
+            "src/process_data/sgootr/upgma.py",
+            "src/process_data/sgootr/transitions.py",
+            "src/process_data/sgootr/tree.py",
+            "src/process_data/sgootr/executables.py",
+        ],
+    output:
+        tree=f"{sgootr_upgma_min_subtracted_height_1_root}/tree.nwk",
+        distance_matrix=f"{sgootr_upgma_min_subtracted_height_1_root}/distance_matrix.csv",
+        nodes=f"{sgootr_upgma_min_subtracted_height_1_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_height_1_root}/edges.csv",
+        transition_times=f"{sgootr_upgma_min_subtracted_height_1_root}/transition_times.csv",
+        transition_times_text=f"{sgootr_upgma_min_subtracted_height_1_root}/transition_times.txt",
+        plot=f"{sgootr_upgma_min_subtracted_height_1_root}/tree.png",
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.process_data.sgootr.upgma "
+        "--input-tree {input.tree:q} "
+        "--output-dir {sgootr_upgma_min_subtracted_height_1_root:q} "
+        "--subtract-minimum-distance --normalize-height"
+
+
+rule preprocess_sgootr_upgma_min_subtracted_height_1_transition_cut:
+    input:
+        tree=f"{sgootr_upgma_min_subtracted_height_1_root}/tree.nwk",
+        transition_times=(
+            f"{sgootr_upgma_min_subtracted_height_1_root}/transition_times.txt"
+        ),
+        transition_events=(
+            f"{sgootr_upgma_min_subtracted_height_1_root}/transition_times.csv"
+        ),
+        code=[
+            "src/process_data/sgootr/transition_cut_upgma.py",
+            "src/process_data/sgootr/upgma.py",
+            "src/process_data/sgootr/tree.py",
+        ],
+    output:
+        tree=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/tree.nwk",
+        distance_matrix=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "subtree_pairwise_distances.csv"
+        ),
+        subtree_summary=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "subtree_summary.csv"
+        ),
+        nodes=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/edges.csv",
+        transition_times=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "transition_times.csv"
+        ),
+        transition_times_text=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "transition_times.txt"
+        ),
+        plot=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/tree.png",
+    params:
+        python=sys.executable,
+        input_dir=sgootr_upgma_min_subtracted_height_1_root,
+        output_dir=sgootr_upgma_min_subtracted_height_1_transition_cut_root,
+    shell:
+        "{params.python:q} -m src.process_data.sgootr.transition_cut_upgma "
+        "--input-dir {params.input_dir:q} "
+        "--output-dir {params.output_dir:q}"
+
+
+rule infer_sgootr_transition_cut_single_state:
+    input:
+        nodes=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/edges.csv",
+        transitions=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "transition_times.csv"
+        ),
+        code=["src/sgootr_single_state.py"],
+    output:
+        inference=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "single_state_inference.json"
+        ),
+        segments=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "single_state_segments.csv"
+        ),
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.sgootr_single_state "
+        "--nodes {input.nodes:q} --edges {input.edges:q} "
+        "--transitions {input.transitions:q} --output {output.inference:q} "
+        "--estimate-sampling --max-birth-rate 100 --max-death-rate 50 "
+        "--segments-output {output.segments:q}"
+
+
 rule prepare_sgootr_per_edge_transitions:
     input:
         transitions="data/sgootr/CRC11_transitions.csv",
@@ -706,6 +872,230 @@ rule infer_sgootr_transition_anchored:
         "export TMPDIR=\"$job_tmp/tmp\" && "
         "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
         "python -m src.main2_given_transitions {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{input.per_edge_transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer lbfgs --no-stem "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_sgootr_upgma_min_subtracted:
+    input:
+        nodes=f"{sgootr_upgma_min_subtracted_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_root}/edges.csv",
+        transition_times=f"{sgootr_upgma_min_subtracted_root}/transition_times.txt",
+        per_edge_transition_times=f"{sgootr_upgma_min_subtracted_root}/transition_times.csv",
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+        ],
+    output:
+        out=f"{sgootr_upgma_min_subtracted_root}/inference_result.txt",
+    params:
+        tree_directory=sgootr_upgma_min_subtracted_root,
+        num_trees=1,
+        num_states=3,
+        python=sys.executable,
+    log:
+        optimization=f"{sgootr_upgma_min_subtracted_root}/optimizer.log",
+        stdout=f"{sgootr_upgma_min_subtracted_root}/inference.stdout.log",
+        stderr=f"{sgootr_upgma_min_subtracted_root}/inference.stderr.log",
+    benchmark:
+        f"{sgootr_upgma_min_subtracted_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "{params.python:q} -m src.main2_given_transitions "
+        "{params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{input.per_edge_transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer lbfgs --no-stem "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_sgootr_upgma_min_subtracted_height_1:
+    input:
+        nodes=f"{sgootr_upgma_min_subtracted_height_1_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_height_1_root}/edges.csv",
+        transition_times=f"{sgootr_upgma_min_subtracted_height_1_root}/transition_times.txt",
+        per_edge_transition_times=f"{sgootr_upgma_min_subtracted_height_1_root}/transition_times.csv",
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+        ],
+    output:
+        out=f"{sgootr_upgma_min_subtracted_height_1_root}/inference_result.txt",
+    params:
+        tree_directory=sgootr_upgma_min_subtracted_height_1_root,
+        num_trees=1,
+        num_states=3,
+        python=sys.executable,
+    log:
+        optimization=f"{sgootr_upgma_min_subtracted_height_1_root}/optimizer.log",
+        stdout=f"{sgootr_upgma_min_subtracted_height_1_root}/inference.stdout.log",
+        stderr=f"{sgootr_upgma_min_subtracted_height_1_root}/inference.stderr.log",
+    benchmark:
+        f"{sgootr_upgma_min_subtracted_height_1_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "{params.python:q} -m src.main2_given_transitions "
+        "{params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{input.per_edge_transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer lbfgs --no-stem "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_sgootr_upgma_min_subtracted_height_1_transition_cut:
+    input:
+        nodes=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/edges.csv",
+        transition_times=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "transition_times.txt"
+        ),
+        per_edge_transition_times=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "transition_times.csv"
+        ),
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+        ],
+    output:
+        out=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "inference_result.txt"
+        ),
+    params:
+        tree_directory=sgootr_upgma_min_subtracted_height_1_transition_cut_root,
+        num_trees=1,
+        num_states=3,
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "optimizer.log"
+        ),
+        stdout=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "inference.stdout.log"
+        ),
+        stderr=(
+            f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/"
+            "inference.stderr.log"
+        ),
+    benchmark:
+        f"{sgootr_upgma_min_subtracted_height_1_transition_cut_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "{params.python:q} -m src.main2_given_transitions "
+        "{params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{input.per_edge_transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer lbfgs --no-stem "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule shift_sgootr_upgma_min_subtracted_transition_times:
+    input:
+        per_edge_transition_times=(
+            f"{sgootr_upgma_min_subtracted_root}/transition_times.csv"
+        ),
+        transition_times=f"{sgootr_upgma_min_subtracted_root}/transition_times.txt",
+        code=["src/process_data/sgootr/shift_transition_times.py"],
+    output:
+        per_edge_transition_times=(
+            f"{sgootr_upgma_min_subtracted_eps_root}/transition_times.csv"
+        ),
+        transition_times=(
+            f"{sgootr_upgma_min_subtracted_eps_root}/transition_times.txt"
+        ),
+    params:
+        python=sys.executable,
+        epsilon=1e-4,
+    shell:
+        "{params.python:q} -m src.process_data.sgootr.shift_transition_times "
+        "--input-csv {input.per_edge_transition_times:q} "
+        "--input-text {input.transition_times:q} "
+        "--output-dir {sgootr_upgma_min_subtracted_eps_root:q} "
+        "--epsilon {params.epsilon}"
+
+
+rule infer_sgootr_upgma_min_subtracted_eps:
+    input:
+        nodes=f"{sgootr_upgma_min_subtracted_root}/nodes.csv",
+        edges=f"{sgootr_upgma_min_subtracted_root}/edges.csv",
+        transition_times=(
+            f"{sgootr_upgma_min_subtracted_eps_root}/transition_times.txt"
+        ),
+        per_edge_transition_times=(
+            f"{sgootr_upgma_min_subtracted_eps_root}/transition_times.csv"
+        ),
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_given_transitions.py",
+            "src/mle_given_transitions.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+            "src/dtos.py",
+            "src/process_data/sgootr/tree.py",
+        ],
+    output:
+        out=f"{sgootr_upgma_min_subtracted_eps_root}/inference_result.txt",
+    params:
+        tree_directory=sgootr_upgma_min_subtracted_root,
+        num_trees=1,
+        num_states=3,
+        python=sys.executable,
+    log:
+        optimization=f"{sgootr_upgma_min_subtracted_eps_root}/optimizer.log",
+        stdout=f"{sgootr_upgma_min_subtracted_eps_root}/inference.stdout.log",
+        stderr=f"{sgootr_upgma_min_subtracted_eps_root}/inference.stderr.log",
+    benchmark:
+        f"{sgootr_upgma_min_subtracted_eps_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "{params.python:q} -m src.main2_given_transitions "
+        "{params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-times-file {input.transition_times:q} "
         "--per-edge-transition-times-pattern "

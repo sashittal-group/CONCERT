@@ -5,6 +5,8 @@ sgootr_profiles:
   datasets:
     - birth_shifted_min_branch
     - transition_anchored
+    - upgma_min_subtracted_height_1
+    - upgma_min_subtracted_height_1_transition_cut_upgma
   state_names:
     - NC
     - PT
@@ -58,9 +60,13 @@ sgootr_profiles:
     dataset_colors:
       birth_shifted_min_branch: "#6f91bd"
       transition_anchored: "#e49a78"
+      upgma_min_subtracted_height_1: "#7b9e69"
+      upgma_min_subtracted_height_1_transition_cut_upgma: "#b07aa1"
     dataset_labels:
       birth_shifted_min_branch: "Min BL"
       transition_anchored: "Rational"
+      upgma_min_subtracted_height_1: "UPGMA h=1"
+      upgma_min_subtracted_height_1_transition_cut_upgma: "UPGMA below latest transition"
     composite_panel_types:
       - growth
       - transition
