@@ -73,7 +73,8 @@ tls_transition_times_file = "data/troupe/transition-times.txt"
 tlsc_root = "data/troupe/TLSC"
 tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
 sgootr_root = "data/sgootr/inference"
-sgootr_transition_anchored_root = "data/sgootr/inference_transition_anchored"
+sgootr_transition_anchored_root = "data/sgootr/processed/transition_anchored"
+sgootr_birth_shifted_root = "data/sgootr/processed/birth_shifted_min_branch"
 tlsc_nodes_files = sorted(Path(tlsc_tree_root).rglob("nodes.csv"))
 tlsc_tree_pairs = [
     (nodes_file, nodes_file.with_name("edges.csv"))
@@ -113,6 +114,7 @@ rule all:
         # f"{kptracer_root}/inference_per_edge.out",
         # f"{sgootr_root}/inference_per_edge.out",
         f"{sgootr_transition_anchored_root}/inference_result.txt",
+        f"{sgootr_birth_shifted_root}/inference_result.txt",
         tls_composite_plot_outputs,
 
 
@@ -423,18 +425,19 @@ rule infer_sgootr_transition_anchored:
     input:
         nodes=f"{sgootr_transition_anchored_root}/nodes.csv",
         edges=f"{sgootr_transition_anchored_root}/edges.csv",
-        transition_edges=f"{sgootr_transition_anchored_root}/transition_edges.txt",
         transition_times=f"{sgootr_transition_anchored_root}/transition_times.txt",
-        per_edge_transition_times=f"{sgootr_transition_anchored_root}/transitions.csv",
+        per_edge_transition_times=f"{sgootr_transition_anchored_root}/transition_times.csv",
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+        ],
     output:
         out=f"{sgootr_transition_anchored_root}/inference_result.txt",
     params:
         tree_directory=sgootr_transition_anchored_root,
         num_trees=1,
         num_states=3,
-        per_edge_transition_times_pattern=(
-            f"{sgootr_transition_anchored_root}/transitions.csv"
-        ),
     log:
         optimization=f"{sgootr_transition_anchored_root}/optimizer.log",
         stdout=f"{sgootr_transition_anchored_root}/inference.stdout.log",
@@ -450,12 +453,52 @@ rule infer_sgootr_transition_anchored:
         "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
         "python -m src.main2_given_transitions {params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
-        "--transition-edges-file {input.transition_edges:q} "
         "--transition-times-file {input.transition_times:q} "
         "--per-edge-transition-times-pattern "
-        "{params.per_edge_transition_times_pattern:q} "
+        "{input.per_edge_transition_times:q} "
         "--output {output.out:q} --log {log.optimization:q} "
-        "--device cpu --optimizer lbfgs --normalize-root-likelihood "
+        "--device cpu --optimizer lbfgs --no-stem "
+        "--shared-sampling-rate "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_sgootr_birth_shifted:
+    input:
+        nodes=f"{sgootr_birth_shifted_root}/nodes.csv",
+        edges=f"{sgootr_birth_shifted_root}/edges.csv",
+        transition_times=f"{sgootr_birth_shifted_root}/transition_times.txt",
+        per_edge_transition_times=f"{sgootr_birth_shifted_root}/transition_times.csv",
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+        ],
+    output:
+        out=f"{sgootr_birth_shifted_root}/inference_result.txt",
+    params:
+        tree_directory=sgootr_birth_shifted_root,
+        num_trees=1,
+        num_states=3,
+    log:
+        optimization=f"{sgootr_birth_shifted_root}/optimizer.log",
+        stdout=f"{sgootr_birth_shifted_root}/inference.stdout.log",
+        stderr=f"{sgootr_birth_shifted_root}/inference.stderr.log",
+    benchmark:
+        f"{sgootr_birth_shifted_root}/inference.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2_given_transitions {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{input.per_edge_transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer lbfgs --no-stem "
         "--shared-sampling-rate "
         "> {log.stdout:q} 2> {log.stderr:q}"
 

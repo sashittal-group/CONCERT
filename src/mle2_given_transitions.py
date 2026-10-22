@@ -471,6 +471,7 @@ def calculate_total_log_likelihood(
     datastructures: list[dict],
     static_transition_times: list[float] | None = None,
     normalize_root_likelihood: bool = False,
+    no_stem: bool = False,
 ) -> torch.Tensor:
     """
     Calculate the total log likelihood across all trees.
@@ -527,11 +528,36 @@ def calculate_total_log_likelihood(
             static_transition_times,
         )
 
-        LL = LL + result[0, 0]
-        if normalize_root_likelihood:
-            LL = LL - torch.log1p(-U_result.root_U[tree_index, 0])
+        tree_log_likelihood = result[0, 0]
+        if no_stem:
+            tree_log_likelihood = crown_conditioned_root_log_likelihood(
+                result[0],
+                U_result.root_U[tree_index],
+            )
+        elif normalize_root_likelihood:
+            tree_log_likelihood -= torch.log1p(-U_result.root_U[tree_index, 0])
+        LL = LL + tree_log_likelihood
 
     return LL
+
+
+def crown_conditioned_root_log_likelihood(
+    root_state_log_likelihoods: torch.Tensor,
+    root_state_extinction_probabilities: torch.Tensor,
+) -> torch.Tensor:
+    """Condition a crown tree on both daughter lineages surviving in state 0."""
+    if root_state_log_likelihoods.ndim != 1:
+        raise ValueError("Root-state log likelihoods must be one-dimensional.")
+    if root_state_extinction_probabilities.shape != root_state_log_likelihoods.shape:
+        raise ValueError(
+            "Root-state extinction probabilities must match root-state likelihoods."
+        )
+    if root_state_log_likelihoods.numel() == 0:
+        raise ValueError("At least one root state is required.")
+
+    return root_state_log_likelihoods[0] - 2.0 * torch.log1p(
+        -root_state_extinction_probabilities[0]
+    )
 
 
 # ============================================================
@@ -606,6 +632,7 @@ class LikelihoodModel(nn.Module):
         trees,
         datastructures,
         normalize_root_likelihood: bool = False,
+        no_stem: bool = False,
     ):
         super().__init__()
 
@@ -613,6 +640,7 @@ class LikelihoodModel(nn.Module):
         self.trees = trees
         self.datastructures = datastructures
         self.normalize_root_likelihood = normalize_root_likelihood
+        self.no_stem = no_stem
         self.static_transition_times = params.transition_times.detach().cpu().tolist()
 
     def forward(self):
@@ -623,6 +651,7 @@ class LikelihoodModel(nn.Module):
             datastructures=self.datastructures,
             static_transition_times=self.static_transition_times,
             normalize_root_likelihood=self.normalize_root_likelihood,
+            no_stem=self.no_stem,
         )
 
 
@@ -652,6 +681,7 @@ def optimize_parameters(
     lbfgs_history_size: int = 100,
     device: Optional[torch.device | str] = None,
     normalize_root_likelihood: bool = False,
+    no_stem: bool = False,
     shared_sampling_rate: bool = False,
 ):
 
@@ -669,6 +699,11 @@ def optimize_parameters(
 
     if patience < 1:
         raise ValueError("patience must be at least 1")
+    if no_stem and normalize_root_likelihood:
+        raise ValueError(
+            "no_stem crown conditioning cannot be combined with "
+            "normalize_root_likelihood."
+        )
 
     print(f"Using device: {device}")
     print("[timing] optimization setup started", flush=True)
@@ -721,6 +756,7 @@ def optimize_parameters(
             trees=trees,
             datastructures=datastructure,
             normalize_root_likelihood=normalize_root_likelihood,
+            no_stem=no_stem,
         )
 
         return OptimizationResult(
@@ -785,6 +821,7 @@ def optimize_parameters(
             trees=trees[start : start + chunk_size],
             datastructures=datastructure[start : start + chunk_size],
             normalize_root_likelihood=normalize_root_likelihood,
+            no_stem=no_stem,
         )
         compiled_models.append(
             torch.compile(
@@ -901,6 +938,7 @@ def optimize_parameters(
                 trees=trees,
                 datastructures=datastructure,
                 normalize_root_likelihood=normalize_root_likelihood,
+                no_stem=no_stem,
             )
 
             loss = -LL
@@ -957,6 +995,7 @@ def optimize_parameters(
             datastructures=datastructure,
             static_transition_times=(given_transition_times),
             normalize_root_likelihood=normalize_root_likelihood,
+            no_stem=no_stem,
         )
 
     # ========================================================

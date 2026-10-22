@@ -11,9 +11,11 @@ from pathlib import Path
 
 import os
 import torch
+import networkx as nx
 
 from src.dataprocessor import load_nodes, load_edges, load_transition_times
 from src.tree_utils import cut_tree, prepare_nx_tree, get_datastructure_for_likelihood_calculation
+from src.process_data.sgootr.tree import STATE_ID_BY_NAME
 
 from src.mle2_given_transitions import (
     optimize_parameters,
@@ -102,6 +104,15 @@ def parse_args():
         "--normalize-root-likelihood",
         action="store_true",
         help="Normalize each tree likelihood by 1 - U(root time).",
+    )
+
+    parser.add_argument(
+        "--no-stem",
+        action="store_true",
+        help=(
+            "Use crown conditioning for a stem-free binary root, assuming "
+            "the known root state is 0."
+        ),
     )
 
     parser.add_argument(
@@ -313,23 +324,59 @@ def load_per_edge_transition_data(
     file_path: str | Path,
 ) -> dict[tuple[int, int], list[tuple[int, int, float]]]:
     transition_df = load_transition_times(str(file_path))
-    required_columns = {"parent", "child", "s0", "s1", "t"}
-    missing_columns = required_columns.difference(transition_df.columns)
-    if missing_columns:
+    columns = set(transition_df.columns)
+    inference_columns = {"parent", "child", "s0", "s1", "t"}
+    pipeline_columns = {
+        "parent",
+        "child",
+        "state_0",
+        "state_1",
+        "transition_time",
+    }
+    if inference_columns.issubset(columns):
+        use_pipeline_columns = False
+    elif pipeline_columns.issubset(columns):
+        use_pipeline_columns = True
+    else:
         raise ValueError(
-            f"Missing columns in {file_path}: {', '.join(sorted(missing_columns))}"
+            f"{file_path} must contain either "
+            f"{', '.join(sorted(inference_columns))} or "
+            f"{', '.join(sorted(pipeline_columns))}."
         )
 
     transitions_by_edge: dict[tuple[int, int], list[tuple[int, int, float]]] = {}
     for row in transition_df.itertuples(index=False):
         edge = (int(row.parent), int(row.child))
-        event = (int(row.s0), int(row.s1), float(row.t))
+        if use_pipeline_columns:
+            try:
+                state_0 = STATE_ID_BY_NAME[row.state_0]
+                state_1 = STATE_ID_BY_NAME[row.state_1]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Unknown transition state in {file_path}: {exc.args[0]!r}."
+                ) from exc
+            transition_time = float(row.transition_time)
+        else:
+            state_0 = int(row.s0)
+            state_1 = int(row.s1)
+            transition_time = float(row.t)
+        event = (state_0, state_1, transition_time)
         transitions_by_edge.setdefault(edge, []).append(event)
 
     for events in transitions_by_edge.values():
         events.sort(key=lambda event: event[2], reverse=True)
 
     return transitions_by_edge
+
+
+def _validate_no_stem_tree(tree: nx.DiGraph) -> None:
+    root = tree.graph["root"]
+    daughter_edges = list(tree.successors(root))
+    if len(daughter_edges) != 2:
+        raise ValueError(
+            "--no-stem requires a binary crown root with exactly two daughter "
+            f"edges; found {len(daughter_edges)}."
+        )
 
 
 def write_result(
@@ -437,6 +484,11 @@ def main(normalize_root_likelihood: bool | None = None):
 
     if normalize_root_likelihood is None:
         normalize_root_likelihood = args.normalize_root_likelihood
+    if args.no_stem and normalize_root_likelihood:
+        raise ValueError(
+            "--no-stem crown conditioning cannot be combined with "
+            "--normalize-root-likelihood."
+        )
 
     # --------------------------------------------------------
     # Settings
@@ -463,6 +515,8 @@ def main(normalize_root_likelihood: bool | None = None):
     print(f"prior=" f"{'true' if args.prior else 'false'}")
 
     print(f"device={device}")
+    if args.no_stem:
+        print("root_conditioning=crown, known_root_state=0, both_daughters_survive")
 
     if args.transition_edges_file:
         print("transition_edges_file=" f"{args.transition_edges_file}")
@@ -535,6 +589,8 @@ def main(normalize_root_likelihood: bool | None = None):
                 loaded_nodes,
                 loaded_edges,
             )
+            if args.no_stem:
+                _validate_no_stem_tree(tree)
 
             trees.append(tree)
 
@@ -551,7 +607,22 @@ def main(normalize_root_likelihood: bool | None = None):
         # FREE TRANSITION EDGES
         # ====================================================
 
-        free_edges = read_free_edges(args.transition_edges_file)
+        if args.transition_edges_file:
+            free_edges = read_free_edges(args.transition_edges_file)
+        elif per_edge_transition_data:
+            free_edges = sorted(
+                {
+                    (source_state, target_state)
+                    for transitions_by_edge in per_edge_transition_data.values()
+                    for events in transitions_by_edge.values()
+                    for source_state, target_state, _ in events
+                }
+            )
+        else:
+            raise ValueError(
+                "Provide --transition-edges-file or per-edge transition data "
+                "from which to infer allowed state transitions."
+            )
 
         print(f"Loaded {len(free_edges)} " f"free transition edges")
 
@@ -691,6 +762,7 @@ def main(normalize_root_likelihood: bool | None = None):
             patience=(args.patience),
             device=device,
             normalize_root_likelihood=normalize_root_likelihood,
+            no_stem=args.no_stem,
             shared_sampling_rate=args.shared_sampling_rate,
         )
         # ====================================================
