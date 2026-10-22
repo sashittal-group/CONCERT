@@ -4,6 +4,7 @@ configfile: "src/results/kptracer/config.yaml"
 
 from pathlib import Path
 import sys
+import yaml
 
 tls_composite_config_dir = Path("src/results/tls")
 
@@ -87,6 +88,46 @@ kptracer_profile_plot_outputs = [
     for basename in kptracer_profile_figure_basenames
     for extension in kptracer_profile_plotting["formats"]
 ]
+tls_fixed_sampling_config_path = Path(
+    "src/results/tls/config_fixed_sampling_0.1.yaml"
+)
+with tls_fixed_sampling_config_path.open() as fixed_sampling_config_file:
+    tls_fixed_sampling_config = yaml.safe_load(fixed_sampling_config_file)[
+        "tls_composite"
+    ]
+tls_fixed_sampling_paths = {
+    name: (
+        Path(value)
+        if Path(value).is_absolute()
+        else tls_fixed_sampling_config_path.parent / value
+    ).resolve()
+    for name, value in (
+        ("inference_root", tls_fixed_sampling_config["inference_root"]),
+        ("preprocessing_root", tls_fixed_sampling_config["preprocessing_root"]),
+        ("figure_root", tls_fixed_sampling_config["figure_root"]),
+    )
+}
+tls_fixed_sampling_files = tls_fixed_sampling_config["files"]
+tls_fixed_sampling_plotting = tls_fixed_sampling_config["plotting"]
+tls_fixed_sampling_datasets = tls_fixed_sampling_config["datasets"]
+tls_fixed_sampling_inference_outputs = [
+    str(tls_fixed_sampling_paths["inference_root"] / dataset / "inference.out")
+    for dataset in tls_fixed_sampling_datasets
+]
+tls_fixed_sampling_profile_outputs = [
+    str(tls_fixed_sampling_paths["preprocessing_root"] / dataset / filename)
+    for dataset in tls_fixed_sampling_datasets
+    for filename in tls_fixed_sampling_files.values()
+]
+tls_fixed_sampling_figure_basenames = [
+    tls_fixed_sampling_plotting["output_basename"],
+    *tls_fixed_sampling_plotting["parameter_output_basenames"].values(),
+]
+tls_fixed_sampling_plot_outputs = [
+    str(tls_fixed_sampling_paths["figure_root"] / f"{basename}.{extension}")
+    for basename in tls_fixed_sampling_figure_basenames
+    for extension in tls_fixed_sampling_plotting["formats"]
+]
 
 
 def tls_composite_tree_files(dataset, filename):
@@ -130,6 +171,12 @@ tls_transition_counts = (5, 10, 20, 50, 100)
 tls_transition_inference_outputs = [
     f"{tls_root}/inference_transition_times_{count}.out"
     for count in tls_transition_counts
+]
+tls_fixed_sampling_transition_counts = (5, 10, 15, 20, 25, 30, 50, 100)
+tls_fixed_sampling_transition_root = f"{tls_root}/fixed_sampling_0.1"
+tls_fixed_sampling_transition_outputs = [
+    f"{tls_fixed_sampling_transition_root}/inference_transition_times_{count}.out"
+    for count in tls_fixed_sampling_transition_counts
 ]
 tlsc_root = "data/troupe/TLSC"
 tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
@@ -188,7 +235,8 @@ rule all:
         # f"{sgootr_root}/inference_per_edge.out",
         # f"{sgootr_transition_anchored_root}/inference_result.txt",
         # f"{sgootr_birth_shifted_root}/inference_result.txt",
-        tls_transition_inference_outputs,
+        # tls_transition_inference_outputs,
+        tls_fixed_sampling_plot_outputs,
         # tls_composite_plot_outputs,
         # sgootr_profile_plot_outputs,
         # kptracer_profile_plot_outputs,
@@ -325,6 +373,166 @@ rule tls_population_size:
     shell:
         "python -m src.results.tls.plot --config {input.settings:q} "
         "--population-size-only"
+
+
+rule tls_fixed_sampling_01:
+    input:
+        inference=tls_fixed_sampling_inference_outputs,
+        profiles=tls_fixed_sampling_profile_outputs,
+        plots=tls_fixed_sampling_plot_outputs,
+
+
+rule tls_fixed_sampling_01_inference:
+    input:
+        nodes=lambda wildcards: tls_composite_tree_files(
+            wildcards.dataset,
+            "nodes.csv",
+        ),
+        edges=lambda wildcards: tls_composite_tree_files(
+            wildcards.dataset,
+            "edges.csv",
+        ),
+        transition_edges=tls_transition_edges_file,
+        transition_times=tls_transition_times_file,
+    output:
+        out=str(
+            tls_fixed_sampling_paths["inference_root"]
+            / "{dataset}"
+            / "inference.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            tls_composite_data_root
+            / wildcards.dataset
+            / "subtrees_kept_states"
+        ),
+        num_trees=lambda wildcards: len(
+            tls_composite_tree_files(wildcards.dataset, "nodes.csv")
+        ),
+        num_states=len(tls_fixed_sampling_config["state_names"]),
+        sampling_probability=tls_fixed_sampling_config[
+            "fixed_sampling_probability"
+        ],
+    log:
+        optimization=str(
+            tls_fixed_sampling_paths["inference_root"]
+            / "{dataset}"
+            / "inference.log"
+        ),
+        stdout=str(
+            tls_fixed_sampling_paths["inference_root"]
+            / "{dataset}"
+            / "stdout.log"
+        ),
+        stderr=str(
+            tls_fixed_sampling_paths["inference_root"]
+            / "{dataset}"
+            / "stderr.log"
+        ),
+    benchmark:
+        str(
+            tls_fixed_sampling_paths["inference_root"]
+            / "{dataset}"
+            / "inference.benchmark"
+        ),
+    wildcard_constraints:
+        dataset="TLS|TLSC",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--fixed-shared-sampling-probability {params.sampling_probability} "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule tls_fixed_sampling_01_preprocess:
+    input:
+        settings=str(tls_fixed_sampling_config_path),
+        code=[
+            "src/results/tls/preprocess.py",
+            "src/results/profile_tools.py",
+            "src/results/tls/data.py",
+            "src/results/tls/likelihood.py",
+            "src/results/tls/config.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_given_transitions.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+        ],
+        inference=str(
+            tls_fixed_sampling_paths["inference_root"]
+            / "{dataset}"
+            / "inference.out"
+        ),
+        nodes=lambda wildcards: tls_composite_tree_files(
+            wildcards.dataset,
+            "nodes.csv",
+        ),
+        edges=lambda wildcards: tls_composite_tree_files(
+            wildcards.dataset,
+            "edges.csv",
+        ),
+    output:
+        profiles=str(
+            tls_fixed_sampling_paths["preprocessing_root"]
+            / "{dataset}"
+            / tls_fixed_sampling_files["profiles"]
+        ),
+        ranges=str(
+            tls_fixed_sampling_paths["preprocessing_root"]
+            / "{dataset}"
+            / tls_fixed_sampling_files["ranges"]
+        ),
+        metadata=str(
+            tls_fixed_sampling_paths["preprocessing_root"]
+            / "{dataset}"
+            / tls_fixed_sampling_files["metadata"]
+        ),
+    wildcard_constraints:
+        dataset="TLS|TLSC",
+    shell:
+        "python -m src.results.tls.preprocess "
+        "--config {input.settings:q} --dataset {wildcards.dataset:q}"
+
+
+rule tls_fixed_sampling_01_plot:
+    input:
+        settings=str(tls_fixed_sampling_config_path),
+        code=[
+            "src/results/tls/plot.py",
+            "src/results/tls/config.py",
+        ],
+        ranges=expand(
+            str(
+                tls_fixed_sampling_paths["preprocessing_root"]
+                / "{dataset}"
+                / tls_fixed_sampling_files["ranges"]
+            ),
+            dataset=tls_fixed_sampling_datasets,
+        ),
+        metadata=expand(
+            str(
+                tls_fixed_sampling_paths["preprocessing_root"]
+                / "{dataset}"
+                / tls_fixed_sampling_files["metadata"]
+            ),
+            dataset=tls_fixed_sampling_datasets,
+        ),
+    output:
+        tls_fixed_sampling_plot_outputs,
+    shell:
+        "python -m src.results.tls.plot --config {input.settings:q}"
 
 
 rule sgootr_profile_preprocess:
@@ -508,8 +716,18 @@ rule simulate:
     benchmark:
         f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/benchmark.txt",
     shell:
-        "python -m src.simulator {input.setting_file:q} {params.source_seed} {params.output_dir:q} "
+        "python -m src.simulator_coord {input.setting_file:q} {params.source_seed} {params.output_dir:q} "
         " > {log.std:q} 2> {log.err:q}"
+
+
+rule generate_coord_trees:
+    input:
+        expand(
+            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/edges.csv",
+            setting=setting_ids,
+            batch=batch_indices,
+            tree=tree_indices,
+        )
 
 
 rule infer_batch:
@@ -632,6 +850,62 @@ rule infer_tls_transition_count:
         "--transition-times-file {input.transition_times:q} "
         "--output {output.out:q} --log {log.optimization:q} "
         "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule tls_transition_count_fixed_sampling_01:
+    input:
+        tls_fixed_sampling_transition_outputs,
+
+
+rule infer_tls_transition_count_fixed_sampling_01:
+    input:
+        nodes=[str(nodes_file) for nodes_file, _ in tls_tree_pairs],
+        edges=[str(edges_file) for _, edges_file in tls_tree_pairs],
+        transition_edges=tls_transition_edges_file,
+        transition_times=lambda wildcards: (
+            f"data/troupe/transition-times-{wildcards.transition_count}.txt"
+        ),
+    output:
+        out=(
+            f"{tls_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.out"
+        ),
+    params:
+        tree_directory=tls_tree_root,
+        num_trees=len(tls_tree_pairs),
+        num_states=3,
+    log:
+        optimization=(
+            f"{tls_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.log"
+        ),
+        stdout=(
+            f"{tls_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.stdout.log"
+        ),
+        stderr=(
+            f"{tls_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.stderr.log"
+        ),
+    benchmark:
+        f"{tls_fixed_sampling_transition_root}/inference_transition_times_{{transition_count}}.benchmark",
+    wildcard_constraints:
+        transition_count="5|10|15|20|25|30|50|100",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--fixed-shared-sampling-probability 0.1 "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 

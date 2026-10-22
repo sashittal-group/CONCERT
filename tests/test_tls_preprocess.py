@@ -17,6 +17,26 @@ from src.results.tls.preprocess import preprocess_dataset
 
 
 class TlsPreprocessTests(unittest.TestCase):
+    def test_fixed_sampling_config_keeps_inference_and_outputs_separate(self) -> None:
+        config = load_config(
+            Path("src/results/tls/config_fixed_sampling_0.1.yaml")
+        )
+
+        self.assertEqual(
+            config.dataset_inference_path("TLS"),
+            Path(
+                "src/results/tls/fixed_sampling_0.1/inference/TLS/inference.out"
+            ).resolve(),
+        )
+        self.assertEqual(
+            config.dataset_output_dir("TLS"),
+            Path("src/results/tls/fixed_sampling_0.1/profiles/TLS").resolve(),
+        )
+        self.assertEqual(
+            config.figure_root,
+            Path("src/results/tls/fixed_sampling_0.1/figures").resolve(),
+        )
+
     def test_preprocess_writes_shared_profile_rows(self) -> None:
         base_config = load_config(Path("src/results/tls/config.yaml"))
         context = DatasetContext(

@@ -20,7 +20,7 @@ from src.results.tls.config import PipelineConfig, load_config
 PANELS = [
     ("Net growth rate", "growth", r"$\beta_s - \delta_s$"),
     ("Transition ratio", "transition_ratio", r"$p_{0,S}/p_{0,NT}$"),
-    ("Scaled sampling", "scaled_sampling", r"$\beta_s \, \rho_s$"),
+    ("Scaled birth rates", "scaled_sampling", r"$\beta_s \, \rho$"),
 ]
 PANEL_DETAILS = {
     parameter_type: (title, y_label)

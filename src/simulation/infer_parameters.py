@@ -7,7 +7,7 @@ import os
 import json
 import argparse
 from src.plotters import plot_differentiation_tree, plot_simulated_lineage_tree
-from src.simulator import (
+from src.simulator_coord import (
     simulate_multitype_bd_with_diff,
     save_tree,
     filter_extant_lineages,

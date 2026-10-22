@@ -300,7 +300,11 @@ def _profile_likelihoods(
 
 
 def preprocess_dataset(dataset: str, config: PipelineConfig) -> None:
-    context = load_dataset_context(config.dataset_root(dataset), config.state_names)
+    context = load_dataset_context(
+        config.dataset_root(dataset),
+        config.state_names,
+        config.dataset_inference_path(dataset),
+    )
     baseline = evaluate_total_log_likelihood(
         context,
         context.birth_rates,

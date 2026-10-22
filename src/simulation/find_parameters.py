@@ -1,6 +1,6 @@
 import argparse
 import sys
-from src.simulator import load_tree
+from src.simulator_coord import load_tree
 from src.likelihood import add_node_times
 from src.mle import find_params
 import networkx as nx

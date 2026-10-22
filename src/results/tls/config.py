@@ -11,6 +11,7 @@ import yaml
 @dataclass(frozen=True)
 class PipelineConfig:
     data_root: Path
+    inference_root: Path | None
     preprocessing_root: Path
     figure_root: Path
     datasets: tuple[str, ...]
@@ -36,6 +37,12 @@ class PipelineConfig:
     def dataset_output_dir(self, dataset: str) -> Path:
         self.dataset_root(dataset)
         return self.preprocessing_root / dataset
+
+    def dataset_inference_path(self, dataset: str) -> Path:
+        dataset_root = self.dataset_root(dataset)
+        if self.inference_root is None:
+            return dataset_root / "inference.out"
+        return self.inference_root / dataset / "inference.out"
 
 
 def load_config(
@@ -175,6 +182,11 @@ def load_config(
 
     return PipelineConfig(
         data_root=configured_path("data_root"),
+        inference_root=(
+            configured_path("inference_root")
+            if settings.get("inference_root") is not None
+            else None
+        ),
         preprocessing_root=configured_path("preprocessing_root"),
         figure_root=configured_path("figure_root"),
         datasets=datasets,

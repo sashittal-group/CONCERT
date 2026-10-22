@@ -195,8 +195,10 @@ def load_inference_parameters(
 def load_dataset_context(
     dataset_root: Path,
     state_names: tuple[str, ...],
+    inference_path: Path | None = None,
 ) -> DatasetContext:
-    inference_path = dataset_root / "inference.out"
+    if inference_path is None:
+        inference_path = dataset_root / "inference.out"
     parameters = load_inference_parameters(inference_path, state_names)
     sensitivity_inputs = _load_subtree_inputs(
         dataset_root,

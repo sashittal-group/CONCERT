@@ -1,31 +1,71 @@
-from collections import defaultdict
+import argparse
 import csv
-import random
-import string
-import sys
-import networkx as nx
-import matplotlib.pyplot as plt
 import json
-from networkx.readwrite import json_graph
+import math
+import random
+from pathlib import Path
+
+import networkx as nx
 import numpy as np
 import pandas as pd
-import argparse
-import os
+from networkx.readwrite import json_graph
 
 
 def simulate_multitype_bd_with_diff(
-    birth_rates,
-    death_rates,
-    sampling_rates,
-    transition_probabilities,
-    differentiation_times,
-    time_length,
-    root_state="A",
-    seed=None,
+    birth_rates: dict[str, float],
+    death_rates: dict[str, float],
+    sampling_rates: dict[str, float],
+    transition_probabilities: pd.DataFrame,
+    differentiation_times: nx.DiGraph,
+    time_length: float,
+    root_state: str = "A",
+    seed: int | None = None,
 ):
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
+    if not math.isfinite(time_length) or time_length <= 0:
+        raise ValueError("time_length must be a finite positive number")
+
+    states = set(differentiation_times.nodes)
+    if root_state not in states:
+        raise ValueError(f"Unknown root state: {root_state}")
+    for state in states:
+        if state not in birth_rates or state not in death_rates:
+            raise ValueError(f"Missing birth/death rate for state {state!r}")
+        if state not in sampling_rates:
+            raise ValueError(f"Missing sampling rate for state {state!r}")
+        birth_rate = float(birth_rates[state])
+        death_rate = float(death_rates[state])
+        sampling_rate = float(sampling_rates[state])
+        if not math.isfinite(birth_rate) or birth_rate < 0:
+            raise ValueError(f"Birth rate for {state!r} must be finite and non-negative")
+        if not math.isfinite(death_rate) or death_rate < 0:
+            raise ValueError(f"Death rate for {state!r} must be finite and non-negative")
+        if not math.isfinite(sampling_rate) or not 0 <= sampling_rate <= 1:
+            raise ValueError(f"Sampling rate for {state!r} must be in [0, 1]")
+        if (
+            state not in transition_probabilities.index
+            or state not in transition_probabilities.columns
+        ):
+            raise ValueError(
+                f"Transition probabilities must include state {state!r}"
+            )
+
+        transition_times = differentiation_times.nodes[state].get(
+            "transition_times",
+            [],
+        )
+        if any(
+            not math.isfinite(float(transition_time))
+            or float(transition_time) < 0
+            or float(transition_time) > time_length
+            for transition_time in transition_times
+        ):
+            raise ValueError(
+                f"Transition times for {state!r} must be finite and within "
+                "the simulation horizon"
+            )
+
+    python_rng = random.Random(seed)
+    numpy_rng = np.random.default_rng(seed)
 
     G = nx.DiGraph()
     next_node = 0
@@ -56,7 +96,7 @@ def simulate_multitype_bd_with_diff(
 
         # BD event time
         if total_rate > 0:
-            dt_bd = random.expovariate(total_rate)
+            dt_bd = python_rng.expovariate(total_rate)
             t_bd = t + dt_bd
         else:
             t_bd = float("inf")
@@ -75,13 +115,11 @@ def simulate_multitype_bd_with_diff(
             # ===== Birth or Death =====
             t = t_bd
 
-            r = random.random() * total_rate
-            cumulative = 0
-            for i, rate in enumerate(rates):
-                cumulative += rate
-                if r <= cumulative:
-                    chosen_index = i
-                    break
+            chosen_index = python_rng.choices(
+                range(len(alive)),
+                weights=rates,
+                k=1,
+            )[0]
 
             parent, tip, state = alive.pop(chosen_index)
 
@@ -89,7 +127,7 @@ def simulate_multitype_bd_with_diff(
             G.edges[parent, tip]["end_time"] = t
             G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
 
-            if random.random() < birth_rates[state] / (
+            if python_rng.random() < birth_rates[state] / (
                 birth_rates[state] + death_rates[state]
             ):
                 # birth
@@ -109,42 +147,15 @@ def simulate_multitype_bd_with_diff(
             # ===== Differentiation =====
             t = t_transition
 
-            new_alive = []
-
-            for parent, tip, state in alive:
-                # close current edge
-                G.nodes[tip]["time"] = t
-                G.nodes[tip]["event"] = "transition"
-
-                G.edges[parent, tip]["end_time"] = t
-                G.edges[parent, tip]["length"] = t - G.edges[parent, tip]["start_time"]
-
-                next_states = list(differentiation_times.successors(state)) + [state]
-
-                # Extract probabilities for allowed children
-                probs = (
-                    transition_probabilities.loc[state, next_states]
-                    .astype(float)
-                    .tolist()
-                )
-
-                # Optional safety normalization (recommended)
-                total = np.sum(probs)
-                if total <= 0:
-                    raise ValueError(f"No positive transition probability from {state}")
-                probs = np.array(probs) / total
-
-                # Sample according to probability vector
-                new_state = np.random.choice(next_states, p=probs)
-
-                c = next_node
-                next_node += 1
-                G.add_node(c, time=None, event=None, state=new_state)
-                G.add_edge(tip, c, start_time=t, end_time=None, length=None)
-
-                new_alive.append((tip, c, new_state))
-
-            alive = new_alive
+            alive, next_node = _apply_scheduled_transitions(
+                graph=G,
+                alive=alive,
+                differentiation_times=differentiation_times,
+                transition_probabilities=transition_probabilities,
+                transition_time=t,
+                next_node=next_node,
+                rng=numpy_rng,
+            )
 
         else:
             break
@@ -159,12 +170,67 @@ def simulate_multitype_bd_with_diff(
         edge["end_state"] = state
         G.nodes[tip]["time"] = time_length
 
-        if np.random.random() < sampling_rates[state]:
+        if numpy_rng.random() < sampling_rates[state]:
             G.nodes[tip]["event"] = "sample"
         else:
             G.nodes[tip]["event"] = "unsampled"
 
     return G, root
+
+
+def _apply_scheduled_transitions(
+    graph: nx.DiGraph,
+    alive: list[tuple[int, int, str]],
+    differentiation_times: nx.DiGraph,
+    transition_probabilities: pd.DataFrame,
+    transition_time: float,
+    next_node: int,
+    rng: np.random.Generator,
+) -> tuple[list[tuple[int, int, str]], int]:
+    next_alive = []
+    for parent, tip, state in alive:
+        scheduled_times = differentiation_times.nodes[state].get(
+            "transition_times",
+            [],
+        )
+        if transition_time not in scheduled_times:
+            next_alive.append((parent, tip, state))
+            continue
+
+        graph.nodes[tip]["time"] = transition_time
+        graph.nodes[tip]["event"] = "transition"
+        edge = graph.edges[parent, tip]
+        edge["end_time"] = transition_time
+        edge["length"] = transition_time - edge["start_time"]
+
+        next_states = [*differentiation_times.successors(state), state]
+        probabilities = transition_probabilities.loc[
+            state,
+            next_states,
+        ].to_numpy(dtype=float)
+        probability_total = float(probabilities.sum())
+        if (
+            not np.all(np.isfinite(probabilities))
+            or np.any(probabilities < 0)
+            or probability_total <= 0
+        ):
+            raise ValueError(f"Invalid transition probabilities from {state!r}")
+        probabilities /= probability_total
+        new_state = str(rng.choice(next_states, p=probabilities))
+
+        child = next_node
+        next_node += 1
+        graph.add_node(child, time=None, event=None, state=new_state)
+        graph.add_edge(
+            tip,
+            child,
+            start_time=transition_time,
+            end_time=None,
+            length=None,
+        )
+        next_alive.append((tip, child, new_state))
+
+    return next_alive, next_node
 
 
 
@@ -215,7 +281,6 @@ def get_active_transitions(
 def filter_extant_lineages(G, root):
     """
     Prune tree bottom-up to keep only extant lineages.
-    Birth nodes with only one surviving child are contracted.
     """
 
     H = G.copy()
@@ -282,17 +347,19 @@ def contract_edges(G, root):
 
     H = nx.DiGraph()
 
-    keep = set()
+    keep = []
 
     for v in G.nodes:
 
         children = list(G.successors(v))
 
         if v == root:
-            keep.add(v)
+            keep.append(v)
 
         elif len(children) != 1:
-            keep.add(v)
+            keep.append(v)
+
+    keep_set = set(keep)
 
     # copy kept nodes
     for v in keep:
@@ -308,7 +375,7 @@ def contract_edges(G, root):
 
         start_time = G.edges[parent_keep, child]["start_time"]
 
-        while current not in keep:
+        while current not in keep_set:
 
             if G.nodes[current]["event"] in {"diff", "transition"}:
 
@@ -380,7 +447,12 @@ def load_tree(filename):
     return G, root
 
 
-def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
+def export_tree(
+    T,
+    node_file="nodes.csv",
+    edge_file="edges.csv",
+    state_to_id: dict[str, int] | None = None,
+):
     # --- write nodes ---
     with open(node_file, "w", newline="") as f:
         writer = csv.writer(f)
@@ -393,7 +465,15 @@ def export_tree(T, node_file="nodes.csv", edge_file="edges.csv"):
             # hard mapping
             if not is_leaf or state is None or state == "?":
                 sid = -1
+            elif state_to_id is not None:
+                if state not in state_to_id:
+                    raise ValueError(f"No state ID configured for {state!r}")
+                sid = state_to_id[state]
             else:
+                if not isinstance(state, str) or len(state) != 1:
+                    raise ValueError(
+                        "state_to_id is required for non-single-character states"
+                    )
                 sid = ord(state) - ord("A")
 
             # print(n, data)
@@ -487,8 +567,14 @@ def read_simulation_settings(setting_file):
                 value = float(row[1])
             except ValueError as error:
                 raise ValueError(f"Invalid rate on line {line_number}") from error
-            if value < 0:
-                raise ValueError(f"Rates must be non-negative on line {line_number}")
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(
+                    f"Rates must be finite and non-negative on line {line_number}"
+                )
+            if section == "sampling rates" and value > 1:
+                raise ValueError(
+                    f"Sampling rates must be at most 1 on line {line_number}"
+                )
             values[row[0]] = value
         if set(values) != set(states):
             raise ValueError(f"'{section}' must define a value for every state")
@@ -512,9 +598,13 @@ def read_simulation_settings(setting_file):
             raise ValueError(
                 f"Invalid transition time on line {line_number}"
             ) from error
-        if any(t < 0 for t in transition_times[row[0]]):
+        if any(
+            not math.isfinite(t) or t < 0
+            for t in transition_times[row[0]]
+        ):
             raise ValueError(
-                f"Transition times must be non-negative on line {line_number}"
+                f"Transition times must be finite and non-negative on line "
+                f"{line_number}"
             )
 
     if seen_time_states != set(states):
@@ -541,9 +631,10 @@ def read_simulation_settings(setting_file):
             raise ValueError(
                 f"Invalid transition probability on line {line_number}"
             ) from error
-        if not 0 <= probability <= 1:
+        if not math.isfinite(probability) or not 0 <= probability <= 1:
             raise ValueError(
-                f"Transition probabilities must be between 0 and 1 on line {line_number}"
+                "Transition probabilities must be finite and between 0 and 1 "
+                f"on line {line_number}"
             )
         transition_probabilities.loc[transition[0], transition[1]] = probability
         seen_transitions.add(transition)
@@ -566,7 +657,11 @@ def read_simulation_settings(setting_file):
         raise ValueError(
             "Time horizon must be numeric and 'num trees' must be an integer"
         ) from error
-    if time_horizon <= 0 or num_trees <= 0:
+    if (
+        not math.isfinite(time_horizon)
+        or time_horizon <= 0
+        or num_trees <= 0
+    ):
         raise ValueError("Time horizon and number of trees must be positive")
 
     root_state = one_value("initial state")
@@ -574,9 +669,13 @@ def read_simulation_settings(setting_file):
         raise ValueError("'initial state' must be one of the declared states")
 
     for state, times in transition_times.items():
-        if times != sorted(times) or any(time > time_horizon for time in times):
+        if (
+            any(left >= right for left, right in zip(times, times[1:]))
+            or any(time > time_horizon for time in times)
+        ):
             raise ValueError(
-                f"Transition times for {state} must be sorted and within the time horizon"
+                "Transition times for "
+                f"{state} must be strictly increasing and within the time horizon"
             )
 
     return {
@@ -592,9 +691,14 @@ def read_simulation_settings(setting_file):
     }
 
 
-def simulate_from_settings(setting_file, source_seed, output_dir):
-    """Generate one main14-style tree, incrementing the seed after failures."""
-    from pathlib import Path
+def simulate_from_settings(
+    setting_file: str | Path,
+    source_seed: int,
+    output_dir: str | Path,
+    max_attempts: int = 1000,
+) -> int:
+    """Generate one tree, trying consecutive seeds until it has sampled tips."""
+    import matplotlib.pyplot as plt
 
     from src.likelihood import add_node_times
     from src.plotters import plot_simulated_lineage_tree
@@ -602,6 +706,8 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
     settings = read_simulation_settings(setting_file)
     if source_seed < 0:
         raise ValueError("source_seed must be non-negative")
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -620,10 +726,12 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
                 differentiation_times.add_edge(state, target)
 
     seed = source_seed
-    while True:
+    graph = None
+    root = None
+    for attempt in range(max_attempts):
+        seed = source_seed + attempt
         print(f"Trying seed {seed}")
-        try:
-            graph, root = simulate_multitype_bd_with_diff(
+        graph, root = simulate_multitype_bd_with_diff(
                 birth_rates=settings["birth_rates"],
                 death_rates=settings["death_rates"],
                 sampling_rates=settings["sampling_rates"],
@@ -632,15 +740,19 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
                 time_length=settings["time_horizon"],
                 root_state=settings["root_state"],
                 seed=seed,
-            )
-            if not any(
+        )
+        if any(
                 data.get("event") == "sample" for _, data in graph.nodes(data=True)
-            ):
-                raise ValueError("Simulation produced no sampled extant tips")
-            break
-        except Exception as error:
-            print(f"Tree generation failed with seed {seed}: {error}")
-            seed += 1
+        ):
+                break
+        print(f"Tree generation produced no sampled tips with seed {seed}")
+    else:
+        raise RuntimeError(
+                "No sampled extant tips were produced after "
+                f"{max_attempts} attempts starting at seed {source_seed}"
+        )
+
+    assert graph is not None and root is not None
 
     graph = add_node_times(graph, root=root, reverse=False)
     for _, data in graph.nodes(data=True):
@@ -652,6 +764,9 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
         extant_graph,
         output_dir / "nodes.csv",
         output_dir / "edges.csv",
+        state_to_id={
+            state: index for index, state in enumerate(settings["states"])
+        },
     )
 
     plot_simulated_lineage_tree(graph, root, show_labels=False)
@@ -681,7 +796,7 @@ def simulate_from_settings(setting_file, source_seed, output_dir):
     return seed
 
 
-def main14():
+def main():
     parser = argparse.ArgumentParser(
         description="Generate one tree from a settings file."
     )
@@ -690,15 +805,22 @@ def main14():
     parser.add_argument(
         "output_dir", help="Directory in which to save the tree outputs"
     )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=1000,
+        help="Maximum consecutive seeds to try when no sampled tips are produced.",
+    )
     args = parser.parse_args()
 
     successful_seed = simulate_from_settings(
         setting_file=args.setting_file,
         source_seed=args.source_seed,
         output_dir=args.output_dir,
+        max_attempts=args.max_attempts,
     )
     print(f"Generated tree using seed {successful_seed}")
 
 
 if __name__ == "__main__":
-    main14()
+    main()
