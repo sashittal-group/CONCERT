@@ -1,4 +1,52 @@
+configfile: "src/results/tls/config.yaml"
+
 from pathlib import Path
+
+tls_composite_config_dir = Path("src/results/tls")
+
+
+def tls_composite_config_path(name):
+    configured = Path(config["tls_composite"][name])
+    if configured.is_absolute():
+        return configured
+    return (tls_composite_config_dir / configured).resolve()
+
+
+tls_composite_config = config["tls_composite"]
+tls_composite_data_root = tls_composite_config_path("data_root")
+tls_composite_preprocessing_root = tls_composite_config_path("preprocessing_root")
+tls_composite_figure_root = tls_composite_config_path("figure_root")
+tls_composite_datasets = tls_composite_config["datasets"]
+tls_composite_files = tls_composite_config["files"]
+tls_composite_plotting = tls_composite_config["plotting"]
+tls_composite_figure_basenames = [
+    tls_composite_plotting["output_basename"],
+    *tls_composite_plotting["parameter_output_basenames"].values(),
+]
+tls_composite_plot_outputs = [
+    str(
+        tls_composite_figure_root
+        / f"{basename}.{extension}"
+    )
+    for basename in tls_composite_figure_basenames
+    for extension in tls_composite_plotting["formats"]
+]
+
+
+def tls_composite_tree_files(dataset, filename):
+    tree_root = tls_composite_data_root / dataset / "subtrees_kept_states"
+    node_files = sorted(tree_root.glob("tree_*/subtree_*/nodes.csv"))
+    if not node_files:
+        raise FileNotFoundError(f"No exported subtree nodes found under {tree_root}")
+    edge_files = [node_file.with_name("edges.csv") for node_file in node_files]
+    missing = [edge_file for edge_file in edge_files if not edge_file.is_file()]
+    if missing:
+        raise ValueError(f"Missing matching subtree edge files: {missing}")
+    return [
+        str(node_file if filename == "nodes.csv" else edge_file)
+        for node_file, edge_file in zip(node_files, edge_files)
+    ]
+
 
 num_batches = 10
 trees_per_batch = 10
@@ -65,6 +113,78 @@ rule all:
         # f"{kptracer_root}/inference_per_edge.out",
         # f"{sgootr_root}/inference_per_edge.out",
         f"{sgootr_transition_anchored_root}/inference_result.txt",
+        tls_composite_plot_outputs,
+
+
+rule tls_composite_preprocess:
+    input:
+        settings="src/results/tls/config.yaml",
+        code=[
+            "src/results/tls/preprocess.py",
+            "src/results/tls/data.py",
+            "src/results/tls/likelihood.py",
+            "src/results/tls/config.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+        ],
+        inference=lambda wildcards: (
+            tls_composite_data_root / wildcards.dataset / "inference.out"
+        ),
+        nodes=lambda wildcards: tls_composite_tree_files(
+            wildcards.dataset, "nodes.csv"
+        ),
+        edges=lambda wildcards: tls_composite_tree_files(
+            wildcards.dataset, "edges.csv"
+        ),
+    output:
+        profiles=str(
+            tls_composite_preprocessing_root
+            / "{dataset}"
+            / tls_composite_files["profiles"]
+        ),
+        ranges=str(
+            tls_composite_preprocessing_root
+            / "{dataset}"
+            / tls_composite_files["ranges"]
+        ),
+        metadata=str(
+            tls_composite_preprocessing_root
+            / "{dataset}"
+            / tls_composite_files["metadata"]
+        ),
+    shell:
+        "python -m src.results.tls.preprocess "
+        "--config {input.settings:q} --dataset {wildcards.dataset:q}"
+
+
+rule tls_composite_plot:
+    input:
+        settings="src/results/tls/config.yaml",
+        code=[
+            "src/results/tls/plot.py",
+            "src/results/tls/config.py",
+        ],
+        ranges=expand(
+            str(
+                tls_composite_preprocessing_root
+                / "{dataset}"
+                / tls_composite_files["ranges"]
+            ),
+            dataset=tls_composite_datasets,
+        ),
+        metadata=expand(
+            str(
+                tls_composite_preprocessing_root
+                / "{dataset}"
+                / tls_composite_files["metadata"]
+            ),
+            dataset=tls_composite_datasets,
+        ),
+    output:
+        tls_composite_plot_outputs,
+    shell:
+        "python -m src.results.tls.plot --config {input.settings:q}"
 
 
 rule simulate:
