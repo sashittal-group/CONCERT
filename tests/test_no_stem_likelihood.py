@@ -50,6 +50,18 @@ class NoStemLikelihoodTests(unittest.TestCase):
 
         self.assertEqual(transitions, {(0, 1): [(0, 1, 0.9)]})
 
+    def test_kptracer_transition_csv_loads_for_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "transitions_0_adjusted.csv"
+            path.write_text(
+                "parent,child,state_0,state_1,t\n"
+                "1,2,0,1,0.9\n"
+            )
+
+            transitions = load_per_edge_transition_data(path)
+
+        self.assertEqual(transitions, {(1, 2): [(0, 1, 0.9)]})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -326,28 +326,35 @@ def load_per_edge_transition_data(
     transition_df = load_transition_times(str(file_path))
     columns = set(transition_df.columns)
     inference_columns = {"parent", "child", "s0", "s1", "t"}
-    pipeline_columns = {
+    named_pipeline_columns = {
         "parent",
         "child",
         "state_0",
         "state_1",
         "transition_time",
     }
+    kptracer_columns = {"parent", "child", "state_0", "state_1", "t"}
     if inference_columns.issubset(columns):
-        use_pipeline_columns = False
-    elif pipeline_columns.issubset(columns):
-        use_pipeline_columns = True
+        use_named_state_columns = False
+        use_kptracer_columns = False
+    elif named_pipeline_columns.issubset(columns):
+        use_named_state_columns = True
+        use_kptracer_columns = False
+    elif kptracer_columns.issubset(columns):
+        use_named_state_columns = False
+        use_kptracer_columns = True
     else:
         raise ValueError(
             f"{file_path} must contain either "
-            f"{', '.join(sorted(inference_columns))} or "
-            f"{', '.join(sorted(pipeline_columns))}."
+            f"{', '.join(sorted(inference_columns))}, "
+            f"{', '.join(sorted(named_pipeline_columns))}, or "
+            f"{', '.join(sorted(kptracer_columns))}."
         )
 
     transitions_by_edge: dict[tuple[int, int], list[tuple[int, int, float]]] = {}
     for row in transition_df.itertuples(index=False):
         edge = (int(row.parent), int(row.child))
-        if use_pipeline_columns:
+        if use_named_state_columns:
             try:
                 state_0 = STATE_ID_BY_NAME[row.state_0]
                 state_1 = STATE_ID_BY_NAME[row.state_1]
@@ -356,6 +363,10 @@ def load_per_edge_transition_data(
                     f"Unknown transition state in {file_path}: {exc.args[0]!r}."
                 ) from exc
             transition_time = float(row.transition_time)
+        elif use_kptracer_columns:
+            state_0 = int(row.state_0)
+            state_1 = int(row.state_1)
+            transition_time = float(row.t)
         else:
             state_0 = int(row.s0)
             state_1 = int(row.s1)

@@ -1,0 +1,67 @@
+sgootr_profiles:
+  data_root: ../../../data/sgootr/processed
+  preprocessing_root: data
+  figure_root: figures
+  datasets:
+    - birth_shifted_min_branch
+    - transition_anchored
+  state_names:
+    - NC
+    - PT
+    - LN
+  likelihood_fractions:
+    - 0.5
+    - 0.1
+    - 1.0e-5
+    - 1.0e-10
+    - 1.0e-25
+  preprocessing:
+    profile_grid_points: 121
+    rate_epsilon: 1.0e-8
+    probability_epsilon: 1.0e-8
+    max_birth_rate: 50.0
+  files:
+    profiles: parameter_profiles.csv
+    ranges: parameter_value_ranges.csv
+    metadata: parameter_metadata.csv
+  plotting:
+    output_basename: SGOOTR_composite_sensitivity_compact
+    parameter_output_basenames:
+      birth: SGOOTR_birth_rates
+      death: SGOOTR_death_rates
+      transition: SGOOTR_transition_probabilities
+      sampling: SGOOTR_sampling_rates
+    formats:
+      - pdf
+      - svg
+    boxplot_likelihood_fraction: 0.1
+    whisker_likelihood_fraction: 1.0e-5
+    figsize:
+      - 14.0
+      - 4.2
+    parameter_figsize:
+      - 6.5
+      - 4.2
+    group_spacing: 1.15
+    dataset_offset: 0.23
+    box_width: 0.34
+    x_limits:
+      - -0.48
+      - 2.78
+    single_group_x_limits:
+      - -0.52
+      - 0.52
+    font_size: 16
+    dataset_label_font_size: 13
+    font_family: Arial
+    math_fontset: stixsans
+    dataset_colors:
+      birth_shifted_min_branch: "#6f91bd"
+      transition_anchored: "#e49a78"
+    dataset_labels:
+      birth_shifted_min_branch: "Min BL"
+      transition_anchored: "Rational"
+    composite_panel_types:
+      - growth
+      - transition
+      - scaled_sampling

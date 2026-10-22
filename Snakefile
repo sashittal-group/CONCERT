@@ -1,4 +1,6 @@
 configfile: "src/results/tls/config.yaml"
+configfile: "src/results/sgootr/config.yaml"
+configfile: "src/results/kptracer/config.yaml"
 
 from pathlib import Path
 
@@ -30,6 +32,46 @@ tls_composite_plot_outputs = [
     )
     for basename in tls_composite_figure_basenames
     for extension in tls_composite_plotting["formats"]
+]
+sgootr_profile_config = config["sgootr_profiles"]
+sgootr_profile_datasets = sgootr_profile_config["datasets"]
+sgootr_profile_files = sgootr_profile_config["files"]
+sgootr_profile_plotting = sgootr_profile_config["plotting"]
+sgootr_profile_preprocessing_root = Path("src/results/sgootr/data")
+sgootr_profile_config_dir = Path("src/results/sgootr")
+sgootr_profile_figure_root = Path(sgootr_profile_config["figure_root"])
+if not sgootr_profile_figure_root.is_absolute():
+    sgootr_profile_figure_root = (
+        sgootr_profile_config_dir / sgootr_profile_figure_root
+    )
+sgootr_profile_figure_basenames = [
+    sgootr_profile_plotting["output_basename"],
+    *sgootr_profile_plotting["parameter_output_basenames"].values(),
+]
+sgootr_profile_plot_outputs = [
+    str(sgootr_profile_figure_root / f"{basename}.{extension}")
+    for basename in sgootr_profile_figure_basenames
+    for extension in sgootr_profile_plotting["formats"]
+]
+kptracer_profile_config = config["kptracer_profiles"]
+kptracer_profile_datasets = kptracer_profile_config["datasets"]
+kptracer_profile_files = kptracer_profile_config["files"]
+kptracer_profile_plotting = kptracer_profile_config["plotting"]
+kptracer_profile_preprocessing_root = Path("src/results/kptracer/data")
+kptracer_profile_config_dir = Path("src/results/kptracer")
+kptracer_profile_figure_root = Path(kptracer_profile_config["figure_root"])
+if not kptracer_profile_figure_root.is_absolute():
+    kptracer_profile_figure_root = (
+        kptracer_profile_config_dir / kptracer_profile_figure_root
+    )
+kptracer_profile_figure_basenames = [
+    kptracer_profile_plotting["output_basename"],
+    *kptracer_profile_plotting["parameter_output_basenames"].values(),
+]
+kptracer_profile_plot_outputs = [
+    str(kptracer_profile_figure_root / f"{basename}.{extension}")
+    for basename in kptracer_profile_figure_basenames
+    for extension in kptracer_profile_plotting["formats"]
 ]
 
 
@@ -116,6 +158,8 @@ rule all:
         f"{sgootr_transition_anchored_root}/inference_result.txt",
         f"{sgootr_birth_shifted_root}/inference_result.txt",
         tls_composite_plot_outputs,
+        sgootr_profile_plot_outputs,
+        kptracer_profile_plot_outputs,
 
 
 rule tls_composite_preprocess:
@@ -123,9 +167,12 @@ rule tls_composite_preprocess:
         settings="src/results/tls/config.yaml",
         code=[
             "src/results/tls/preprocess.py",
+            "src/results/profile_tools.py",
             "src/results/tls/data.py",
             "src/results/tls/likelihood.py",
             "src/results/tls/config.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_given_transitions.py",
             "src/closed_form_coord2.py",
             "src/tree_utils.py",
             "src/dataprocessor.py",
@@ -187,6 +234,160 @@ rule tls_composite_plot:
         tls_composite_plot_outputs,
     shell:
         "python -m src.results.tls.plot --config {input.settings:q}"
+
+
+rule sgootr_profile_preprocess:
+    input:
+        settings="src/results/sgootr/config.yaml",
+        code=[
+            "src/results/sgootr/preprocess.py",
+            "src/results/sgootr/data.py",
+            "src/results/profile_tools.py",
+            "src/results/tls/config.py",
+            "src/results/tls/data.py",
+            "src/results/tls/likelihood.py",
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_given_transitions.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+        ],
+        inference=lambda wildcards: (
+            f"data/sgootr/processed/{wildcards.dataset}/inference_result.txt"
+        ),
+        nodes=lambda wildcards: (
+            f"data/sgootr/processed/{wildcards.dataset}/nodes.csv"
+        ),
+        edges=lambda wildcards: (
+            f"data/sgootr/processed/{wildcards.dataset}/edges.csv"
+        ),
+        transition_times=lambda wildcards: (
+            f"data/sgootr/processed/{wildcards.dataset}/transition_times.txt"
+        ),
+        transition_events=lambda wildcards: (
+            f"data/sgootr/processed/{wildcards.dataset}/transition_times.csv"
+        ),
+    output:
+        profiles=str(
+            sgootr_profile_preprocessing_root
+            / "{dataset}"
+            / sgootr_profile_files["profiles"]
+        ),
+        ranges=str(
+            sgootr_profile_preprocessing_root
+            / "{dataset}"
+            / sgootr_profile_files["ranges"]
+        ),
+        metadata=str(
+            sgootr_profile_preprocessing_root
+            / "{dataset}"
+            / sgootr_profile_files["metadata"]
+        ),
+    shell:
+        "python -m src.results.sgootr.preprocess "
+        "--config {input.settings:q} --dataset {wildcards.dataset:q}"
+
+
+rule sgootr_profile_plot:
+    input:
+        settings="src/results/sgootr/config.yaml",
+        code=[
+            "src/results/sgootr/plot.py",
+            "src/results/tls/plot.py",
+            "src/results/tls/config.py",
+        ],
+        ranges=expand(
+            str(
+                sgootr_profile_preprocessing_root
+                / "{dataset}"
+                / sgootr_profile_files["ranges"]
+            ),
+            dataset=sgootr_profile_datasets,
+        ),
+        metadata=expand(
+            str(
+                sgootr_profile_preprocessing_root
+                / "{dataset}"
+                / sgootr_profile_files["metadata"]
+            ),
+            dataset=sgootr_profile_datasets,
+        ),
+    output:
+        sgootr_profile_plot_outputs,
+    shell:
+        "python -m src.results.sgootr.plot --config {input.settings:q}"
+
+
+rule kptracer_profile_preprocess:
+    input:
+        settings="src/results/kptracer/config.yaml",
+        code=[
+            "src/results/kptracer/preprocess.py",
+            "src/results/kptracer/data.py",
+            "src/results/profile_tools.py",
+            "src/results/tls/config.py",
+            "src/results/tls/data.py",
+            "src/results/tls/likelihood.py",
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_given_transitions.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+        ],
+        inference=f"{kptracer_root}/inference_per_edge.out",
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transitions=f"{kptracer_root}/transitions_0_adjusted.csv",
+        transition_times=f"{kptracer_root}/transition-times.txt",
+    output:
+        profiles=str(
+            kptracer_profile_preprocessing_root
+            / "{dataset}"
+            / kptracer_profile_files["profiles"]
+        ),
+        ranges=str(
+            kptracer_profile_preprocessing_root
+            / "{dataset}"
+            / kptracer_profile_files["ranges"]
+        ),
+        metadata=str(
+            kptracer_profile_preprocessing_root
+            / "{dataset}"
+            / kptracer_profile_files["metadata"]
+        ),
+    shell:
+        "python -m src.results.kptracer.preprocess "
+        "--config {input.settings:q} --dataset {wildcards.dataset:q}"
+
+
+rule kptracer_profile_plot:
+    input:
+        settings="src/results/kptracer/config.yaml",
+        code=[
+            "src/results/kptracer/plot.py",
+            "src/results/tls/plot.py",
+            "src/results/tls/config.py",
+        ],
+        ranges=expand(
+            str(
+                kptracer_profile_preprocessing_root
+                / "{dataset}"
+                / kptracer_profile_files["ranges"]
+            ),
+            dataset=kptracer_profile_datasets,
+        ),
+        metadata=expand(
+            str(
+                kptracer_profile_preprocessing_root
+                / "{dataset}"
+                / kptracer_profile_files["metadata"]
+            ),
+            dataset=kptracer_profile_datasets,
+        ),
+    output:
+        kptracer_profile_plot_outputs,
+    shell:
+        "python -m src.results.kptracer.plot --config {input.settings:q}"
 
 
 rule simulate:
@@ -503,6 +704,35 @@ rule infer_sgootr_birth_shifted:
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 
+rule process_kptracer:
+    input:
+        newick="data/laml/problin_1461.nwk",
+        metadata="data/laml/KPTracer_meta.csv",
+        refined_tree=f"{kptracer_root}/0-T-0.refined.tree",
+        location_labels=f"{kptracer_root}/0-T-0.location.labeling",
+        code=[
+            "src/process_data/kptracer/pipeline.py",
+            "src/process_data/kptracer/tree.py",
+            "src/process_data/kptracer/transitions.py",
+            "src/likelihood.py",
+            "src/dataprocessor.py",
+        ],
+    output:
+        tree_edges=f"{kptracer_root}/1461.tree",
+        leaf_labels=f"{kptracer_root}/1461.labeling",
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transitions=f"{kptracer_root}/transitions_0.csv",
+        adjusted_transitions=f"{kptracer_root}/transitions_0_adjusted.csv",
+        transition_times=f"{kptracer_root}/transition-times.txt",
+    shell:
+        "python -m src.process_data.kptracer.pipeline "
+        "--tree {input.newick:q} --metadata {input.metadata:q} "
+        "--refined-tree {input.refined_tree:q} "
+        "--location-labels {input.location_labels:q} "
+        "--output-dir {kptracer_root:q}"
+
+
 rule infer_kptracer:
     input:
         nodes=f"{kptracer_root}/nodes_0.csv",
@@ -574,9 +804,8 @@ rule infer_kptracer_per_edge:
         "--per-edge-transition-times-pattern "
         "{params.per_edge_transition_times_pattern:q} "
         "--output {output.out:q} --log {log.optimization:q} "
-        "--device cpu --optimizer adam --normalize-root-likelihood "
-        "--fixed-shared-sampling-probability 0.05"
-        # "--shared-sampling-rate "
+        "--device cpu --optimizer adam --no-stem "
+        "--shared-sampling-rate "
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 

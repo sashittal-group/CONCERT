@@ -37,6 +37,15 @@ class DatasetContext:
         return [subtree.root_time for subtree in self.sensitivity_inputs]
 
 
+@dataclass(frozen=True)
+class InferenceParameters:
+    birth_rates: torch.Tensor
+    death_rates: torch.Tensor
+    sampling_probabilities: torch.Tensor
+    transition_probabilities: torch.Tensor
+    transition_times: list[float]
+
+
 def _parse_parameter_vector(lines: list[str], name: str, path: Path) -> list[float]:
     prefix = f"{name}:"
     matching_lines = [line for line in lines if line.startswith(prefix)]
@@ -146,11 +155,10 @@ def _load_subtree_inputs(
     return inputs
 
 
-def load_dataset_context(
-    dataset_root: Path,
+def load_inference_parameters(
+    inference_path: Path,
     state_names: tuple[str, ...],
-) -> DatasetContext:
-    inference_path = dataset_root / "inference.out"
+) -> InferenceParameters:
     lines = inference_path.read_text().splitlines()
     birth_rates = torch.tensor(
         _parse_parameter_vector(lines, "birth", inference_path), dtype=torch.float64
@@ -159,26 +167,47 @@ def load_dataset_context(
         _parse_parameter_vector(lines, "death", inference_path), dtype=torch.float64
     )
     sampling_probabilities = torch.tensor(
-        _parse_parameter_vector(lines, "sampling", inference_path), dtype=torch.float64
+        _parse_parameter_vector(lines, "sampling", inference_path),
+        dtype=torch.float64,
     )
     num_states = len(birth_rates)
     if num_states != len(state_names):
         raise ValueError(
-            f"Expected {len(state_names)} states in {dataset_root.name}; found {num_states}"
+            f"Expected {len(state_names)} states in {inference_path.parent.name}; "
+            f"found {num_states}"
         )
     if len(death_rates) != num_states or len(sampling_probabilities) != num_states:
         raise ValueError(f"Inconsistent inferred parameter lengths in {inference_path}")
 
-    transition_probabilities = _parse_transition_matrix(lines, num_states, inference_path)
-    transition_times = _parse_transition_times(lines, inference_path)
+    return InferenceParameters(
+        birth_rates=birth_rates,
+        death_rates=death_rates,
+        sampling_probabilities=sampling_probabilities,
+        transition_probabilities=_parse_transition_matrix(
+            lines,
+            num_states,
+            inference_path,
+        ),
+        transition_times=_parse_transition_times(lines, inference_path),
+    )
+
+
+def load_dataset_context(
+    dataset_root: Path,
+    state_names: tuple[str, ...],
+) -> DatasetContext:
+    inference_path = dataset_root / "inference.out"
+    parameters = load_inference_parameters(inference_path, state_names)
     sensitivity_inputs = _load_subtree_inputs(
-        dataset_root, transition_times, num_states
+        dataset_root,
+        parameters.transition_times,
+        len(parameters.birth_rates),
     )
     return DatasetContext(
-        birth_rates,
-        death_rates,
-        sampling_probabilities,
-        transition_probabilities,
-        transition_times,
-        sensitivity_inputs,
+        birth_rates=parameters.birth_rates,
+        death_rates=parameters.death_rates,
+        sampling_probabilities=parameters.sampling_probabilities,
+        transition_probabilities=parameters.transition_probabilities,
+        transition_times=parameters.transition_times,
+        sensitivity_inputs=sensitivity_inputs,
     )

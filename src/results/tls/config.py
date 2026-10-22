@@ -20,6 +20,7 @@ class PipelineConfig:
     rate_epsilon: float
     probability_epsilon: float
     max_birth_rate: float
+    rate_profile_growth_span: float
     profile_filename: str
     ranges_filename: str
     metadata_filename: str
@@ -37,31 +38,36 @@ class PipelineConfig:
         return self.preprocessing_root / dataset
 
 
-def load_config(path: Path) -> PipelineConfig:
+def load_config(
+    path: Path,
+    section: str = "tls_composite",
+) -> PipelineConfig:
     config_path = path.resolve()
     with config_path.open() as config_file:
         document = yaml.safe_load(config_file)
     if not isinstance(document, dict):
         raise ValueError(f"Configuration in {config_path} must be a mapping")
 
-    settings = document.get("tls_composite")
+    settings = document.get(section)
     if not isinstance(settings, dict):
-        raise ValueError(f"{config_path} must define a tls_composite mapping")
+        raise ValueError(f"{config_path} must define a {section} mapping")
 
     preprocessing = settings.get("preprocessing")
     files = settings.get("files")
     plotting = settings.get("plotting")
     if not isinstance(preprocessing, dict) or not isinstance(files, dict):
-        raise ValueError("tls_composite.preprocessing and tls_composite.files are required")
+        raise ValueError(
+            f"{section}.preprocessing and {section}.files are required"
+        )
     if not isinstance(plotting, dict):
-        raise ValueError("tls_composite.plotting must be a mapping")
+        raise ValueError(f"{section}.plotting must be a mapping")
 
     base_dir = config_path.parent
 
     def configured_path(name: str) -> Path:
         value = settings.get(name)
         if not isinstance(value, str) or not value:
-            raise ValueError(f"tls_composite.{name} must be a non-empty path")
+            raise ValueError(f"{section}.{name} must be a non-empty path")
         configured = Path(value)
         if configured.is_absolute():
             return configured.resolve()
@@ -73,21 +79,21 @@ def load_config(path: Path) -> PipelineConfig:
     if not isinstance(raw_datasets, list) or not all(
         isinstance(value, str) and value for value in raw_datasets
     ):
-        raise ValueError("tls_composite.datasets must be a list of names")
+        raise ValueError(f"{section}.datasets must be a list of names")
     if not isinstance(raw_state_names, list) or not all(
         isinstance(value, str) and value for value in raw_state_names
     ):
-        raise ValueError("tls_composite.state_names must be a list of names")
+        raise ValueError(f"{section}.state_names must be a list of names")
     if not isinstance(raw_fractions, list):
-        raise ValueError("tls_composite.likelihood_fractions must be a list")
+        raise ValueError(f"{section}.likelihood_fractions must be a list")
 
     datasets = tuple(raw_datasets)
     state_names = tuple(raw_state_names)
     fractions = tuple(float(value) for value in raw_fractions)
     if not datasets or len(set(datasets)) != len(datasets):
         raise ValueError("tls_composite.datasets must contain unique dataset names")
-    if len(state_names) != 3 or len(set(state_names)) != len(state_names):
-        raise ValueError("tls_composite.state_names must contain three unique states")
+    if len(state_names) < 2 or len(set(state_names)) != len(state_names):
+        raise ValueError(f"{section}.state_names must contain at least two unique states")
     if (
         not fractions
         or len(set(fractions)) != len(fractions)
@@ -101,6 +107,9 @@ def load_config(path: Path) -> PipelineConfig:
     rate_epsilon = float(preprocessing.get("rate_epsilon", 0.0))
     probability_epsilon = float(preprocessing.get("probability_epsilon", 0.0))
     max_birth_rate = float(preprocessing.get("max_birth_rate", 0.0))
+    rate_profile_growth_span = float(
+        preprocessing.get("rate_profile_growth_span", 5.0)
+    )
     if grid_points < 2:
         raise ValueError("profile_grid_points must be at least 2")
     if any(
@@ -108,6 +117,8 @@ def load_config(path: Path) -> PipelineConfig:
         for value in (rate_epsilon, probability_epsilon, max_birth_rate)
     ):
         raise ValueError("Rate/probability epsilons and max_birth_rate must be positive")
+    if not math.isfinite(rate_profile_growth_span) or rate_profile_growth_span <= 1.0:
+        raise ValueError("rate_profile_growth_span must be finite and greater than 1")
 
     for key in ("profiles", "ranges", "metadata"):
         if not isinstance(files.get(key), str) or not files[key]:
@@ -173,6 +184,7 @@ def load_config(path: Path) -> PipelineConfig:
         rate_epsilon=rate_epsilon,
         probability_epsilon=probability_epsilon,
         max_birth_rate=max_birth_rate,
+        rate_profile_growth_span=rate_profile_growth_span,
         profile_filename=files["profiles"],
         ranges_filename=files["ranges"],
         metadata_filename=files["metadata"],

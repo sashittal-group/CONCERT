@@ -10,6 +10,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.colors import LogNorm
 from matplotlib.patches import Rectangle
 
 from src.results.tls.config import PipelineConfig, load_config
@@ -20,6 +21,11 @@ PANELS = [
     ("Transition ratio", "transition_ratio", r"$p_{0,S}/p_{0,NT}$"),
     ("Scaled sampling", "scaled_sampling", r"$\beta_s \, \rho_s$"),
 ]
+PANEL_DETAILS = {
+    parameter_type: (title, y_label)
+    for title, parameter_type, y_label in PANELS
+}
+PANEL_DETAILS["transition"] = ("Transition probabilities", r"$p_{s,d}$")
 PARAMETER_PLOTS = [
     ("birth", "Birth rates", r"$\beta_s$"),
     ("death", "Death rates", r"$\delta_s$"),
@@ -186,11 +192,25 @@ def _plot_panel(
     font_size = int(plot["font_size"])
     group_labels = []
     x_ticks = []
-    limits = (
-        plot["single_group_x_limits"]
-        if parameter_type == "transition_ratio"
-        else plot["x_limits"]
+    excluded_parameters = set(
+        plot.get("composite_excluded_parameters", {}).get(parameter_type, [])
     )
+    parameters = parameters[~parameters["parameter"].isin(excluded_parameters)]
+    if parameters.empty:
+        raise ValueError(f"No metadata found for parameter type {parameter_type}")
+    if parameter_type == "transition_ratio":
+        limits = plot["single_group_x_limits"]
+    elif parameter_type == "transition":
+        left_margin = abs(float(plot["x_limits"][0]))
+        right_margin = float(plot["x_limits"][1]) - (
+            (len(config.state_names) - 1) * float(plot["group_spacing"])
+        )
+        limits = [
+            -left_margin,
+            (len(parameters) - 1) * float(plot["group_spacing"]) + right_margin,
+        ]
+    else:
+        limits = plot["x_limits"]
     axis.set_xlim(*limits)
     horizontal_scale = (
         (limits[1] - limits[0]) / (plot["x_limits"][1] - plot["x_limits"][0])
@@ -201,7 +221,25 @@ def _plot_panel(
     for position, row in enumerate(parameters.itertuples(index=False)):
         if parameter_type == "transition_ratio":
             group_center = 0.0
-            group_label = f"{config.state_names[1]} / {config.state_names[2]}"
+            group_label = plot.get(
+                "transition_ratio_group_label",
+                f"{config.state_names[1]} / {config.state_names[2]}",
+            )
+        elif parameter_type == "transition":
+            source, target = divmod(
+                int(row.parameter_index),
+                len(config.state_names),
+            )
+            if (
+                source == target
+                or not 0 <= source < len(config.state_names)
+                or not 0 <= target < len(config.state_names)
+            ):
+                raise ValueError(f"Unexpected transition index {row.parameter_index}")
+            group_center = position * float(plot["group_spacing"])
+            group_label = (
+                f"{config.state_names[source]}->{config.state_names[target]}"
+            )
         else:
             state_index = int(row.parameter_index)
             if not 0 <= state_index < len(config.state_names):
@@ -211,7 +249,11 @@ def _plot_panel(
         group_labels.append((group_center, group_label))
 
         for dataset_index, dataset in enumerate(config.datasets):
-            direction = -1.0 if dataset_index == 0 else 1.0
+            direction = (
+                0.0
+                if len(config.datasets) == 1
+                else (-1.0 if dataset_index == 0 else 1.0)
+            )
             x_position = group_center + direction * dataset_offset
             metadata = metadata_by_dataset[dataset]
             matching_metadata = metadata[metadata["parameter"] == row.parameter]
@@ -242,7 +284,8 @@ def _plot_panel(
                 plot["dataset_colors"][dataset],
                 box_width,
             )
-            x_ticks.append((x_position, dataset))
+            dataset_label = plot.get("dataset_labels", {}).get(dataset, dataset)
+            x_ticks.append((x_position, dataset_label))
 
     axis.set_title(
         title,
@@ -250,20 +293,32 @@ def _plot_panel(
         fontweight="normal",
         pad=5,
     )
-    axis.set_xticks([x for x, _ in x_ticks], labels=[label for _, label in x_ticks])
-    axis.tick_params(axis="x", labelsize=font_size, length=3, pad=1)
-    for group_center, label in group_labels:
-        axis.text(
-            group_center,
-            -0.10,
-            label,
-            transform=axis.get_xaxis_transform(),
-            ha="center",
-            va="top",
-            fontsize=font_size,
-            clip_on=False,
+    if len(config.datasets) == 1:
+        axis.set_xticks(
+            [x for x, _ in group_labels],
+            labels=[label for _, label in group_labels],
         )
-    axis.set_ylabel(y_label, fontsize=font_size, labelpad=2)
+    else:
+        axis.set_xticks([x for x, _ in x_ticks], labels=[label for _, label in x_ticks])
+        for group_center, label in group_labels:
+            axis.text(
+                group_center,
+                -0.10,
+                label,
+                transform=axis.get_xaxis_transform(),
+                ha="center",
+                va="top",
+                fontsize=font_size,
+                clip_on=False,
+            )
+    axis.tick_params(
+        axis="x",
+        labelsize=int(plot.get("dataset_label_font_size", font_size)),
+        length=3,
+        pad=1,
+    )
+    panel_y_label = plot.get("panel_y_labels", {}).get(parameter_type, y_label)
+    axis.set_ylabel(panel_y_label, fontsize=font_size, labelpad=2)
     axis.tick_params(axis="y", labelsize=font_size, length=3, pad=1)
     axis.set_axisbelow(True)
     axis.grid(axis="y", color="0.87", linewidth=0.7, linestyle=":")
@@ -286,19 +341,42 @@ def _render_sensitivity(
     ranges: dict[str, pd.DataFrame],
     metadata: dict[str, pd.DataFrame],
 ) -> list[Path]:
-    if len(config.datasets) != 2:
-        raise ValueError("The comparison plot requires exactly two configured datasets")
-    figure, axes = plt.subplots(1, 3, figsize=tuple(config.plotting["figsize"]))
-    for axis, (title, parameter_type, y_label) in zip(axes, PANELS):
-        _plot_panel(
-            axis,
-            title,
-            parameter_type,
-            y_label,
-            ranges,
-            metadata,
-            config,
+    if not config.datasets or len(config.datasets) > 2:
+        raise ValueError(
+            "The sensitivity plot requires one or two configured datasets"
         )
+    figure, axes = plt.subplots(1, 3, figsize=tuple(config.plotting["figsize"]))
+    panel_types = config.plotting.get(
+        "composite_panel_types",
+        [parameter_type for _, parameter_type, _ in PANELS],
+    )
+    if not isinstance(panel_types, list) or len(panel_types) != len(axes):
+        raise ValueError("composite_panel_types must define one type per panel")
+    for axis, parameter_type in zip(axes, panel_types):
+        if not isinstance(parameter_type, str) or parameter_type not in PANEL_DETAILS:
+            raise ValueError(f"Unsupported composite panel type: {parameter_type}")
+        title, y_label = PANEL_DETAILS[parameter_type]
+        if (
+            parameter_type == "transition"
+            and config.plotting.get("transition_plot_style") == "heatmap"
+        ):
+            _draw_transition_heatmap(
+                axis,
+                metadata[config.datasets[0]],
+                config,
+                title,
+                add_colorbar=True,
+            )
+        else:
+            _plot_panel(
+                axis,
+                title,
+                parameter_type,
+                y_label,
+                ranges,
+                metadata,
+                config,
+            )
     figure.subplots_adjust(
         left=0.06,
         right=0.995,
@@ -328,12 +406,151 @@ def _parameter_group_label(
     if parameter_type in {"birth", "death"}:
         return config.state_names[parameter_index]
     if parameter_type == "transition":
+        edge_label = parameter_name.removeprefix("transition[").removesuffix("]")
+        if "->" in edge_label:
+            return edge_label.replace("->", " to ")
         if not 0 < parameter_index < len(config.state_names):
             raise ValueError(f"Unexpected transition target index {parameter_index}")
         return f"{config.state_names[0]} to {config.state_names[parameter_index]}"
     if parameter_name == "sampling[shared]":
         return "Shared"
     return config.state_names[parameter_index]
+
+
+def _transition_probability_matrix(
+    metadata: pd.DataFrame,
+    config: PipelineConfig,
+) -> np.ndarray:
+    num_states = len(config.state_names)
+    matrix = np.zeros((num_states, num_states), dtype=float)
+    transitions = metadata[metadata["parameter_type"] == "transition"]
+    for row in transitions.itertuples(index=False):
+        source, target = divmod(int(row.parameter_index), num_states)
+        probability = float(row.original_value)
+        if (
+            source == target
+            or not 0 <= source < num_states
+            or not 0 <= target < num_states
+            or not np.isfinite(probability)
+            or not 0.0 <= probability <= 1.0
+        ):
+            raise ValueError(f"Invalid transition metadata for {row.parameter}")
+        matrix[source, target] = probability
+
+    for source in range(num_states):
+        outgoing_probability = float(matrix[source].sum())
+        if outgoing_probability > 1.0 + 1e-8:
+            raise ValueError(
+                f"Transition probabilities from {config.state_names[source]} "
+                "sum to more than one"
+            )
+        matrix[source, source] = max(0.0, 1.0 - outgoing_probability)
+    return matrix
+
+
+def _draw_transition_heatmap(
+    axis: plt.Axes,
+    metadata: pd.DataFrame,
+    config: PipelineConfig,
+    title: str,
+    *,
+    add_colorbar: bool,
+) -> None:
+    matrix = _transition_probability_matrix(metadata, config)
+    positive = matrix[matrix > 0.0]
+    if positive.size == 0:
+        raise ValueError("Transition matrix has no positive probabilities")
+    lower = float(positive.min())
+    upper = float(positive.max())
+    if lower == upper:
+        lower = upper / 10.0
+
+    masked = np.ma.masked_where(matrix <= 0.0, matrix)
+    image = axis.imshow(
+        masked,
+        cmap=config.plotting.get("transition_heatmap_colormap", "Blues"),
+        norm=LogNorm(vmin=lower, vmax=upper),
+        interpolation="nearest",
+    )
+    font_size = int(config.plotting["font_size"])
+    for source in range(len(config.state_names)):
+        for target in range(len(config.state_names)):
+            probability = matrix[source, target]
+            label = f"{probability:.2g}" if probability > 0.0 else "0"
+            normalized = image.norm(probability) if probability > 0.0 else 0.0
+            color = "white" if normalized > 0.62 else "#202124"
+            axis.text(
+                target,
+                source,
+                label,
+                ha="center",
+                va="center",
+                color=color,
+                fontsize=max(font_size - 4, 8),
+            )
+
+    states = config.state_names
+    axis.set_xticks(range(len(states)), labels=states)
+    axis.set_yticks(range(len(states)), labels=states)
+    axis.set_xlabel(
+        config.plotting.get("transition_heatmap_x_label", "Destination"),
+        fontsize=font_size,
+        labelpad=3,
+    )
+    axis.set_ylabel(
+        config.plotting.get("transition_heatmap_y_label", "Source"),
+        fontsize=font_size,
+        labelpad=3,
+    )
+    axis.set_title(title, fontsize=font_size, fontweight="normal", pad=5)
+    axis.set_aspect("equal")
+    axis.set_xticks(np.arange(-0.5, len(states), 1), minor=True)
+    axis.set_yticks(np.arange(-0.5, len(states), 1), minor=True)
+    axis.grid(which="minor", color="white", linewidth=1.5)
+    axis.tick_params(which="minor", bottom=False, left=False)
+    axis.tick_params(axis="both", labelsize=max(font_size - 2, 8), length=0, pad=2)
+    axis.spines[:].set_visible(False)
+    if add_colorbar:
+        colorbar = axis.figure.colorbar(
+            image,
+            ax=axis,
+            fraction=0.046,
+            pad=0.04,
+        )
+        colorbar.set_label(
+            "Transition probability (log scale)",
+            fontsize=max(font_size - 3, 8),
+        )
+        colorbar.ax.tick_params(labelsize=max(font_size - 4, 8), length=2)
+
+
+def _render_transition_heatmap_plot(
+    config: PipelineConfig,
+    metadata_by_dataset: dict[str, pd.DataFrame],
+) -> list[Path]:
+    dataset = config.datasets[0]
+    plot = config.plotting
+    figure_size = tuple(
+        plot.get("transition_heatmap_figsize", plot["parameter_figsize"])
+    )
+    figure, axis = plt.subplots(figsize=figure_size)
+    _draw_transition_heatmap(
+        axis,
+        metadata_by_dataset[dataset],
+        config,
+        "Transition probabilities",
+        add_colorbar=True,
+    )
+    figure.subplots_adjust(left=0.18, right=0.86, top=0.92, bottom=0.12)
+
+    outputs = []
+    output_basename = plot["parameter_output_basenames"]["transition"]
+    for extension in plot["formats"]:
+        output = config.figure_root / f"{output_basename}.{extension}"
+        figure.savefig(output, bbox_inches="tight", pad_inches=0.01)
+        outputs.append(output)
+    plt.close(figure)
+    return outputs
 
 
 def _render_parameter_plot(
@@ -357,16 +574,18 @@ def _render_parameter_plot(
     plot = config.plotting
     group_spacing = float(plot["group_spacing"])
     group_centers = [index * group_spacing for index in range(len(parameters))]
+    dataset_label_font_size = int(
+        plot.get("dataset_label_font_size", plot["font_size"])
+    )
+    if parameter_type == "transition" and plot.get("transition_plot_style") == "heatmap":
+        raise ValueError("Transition heatmaps are rendered by the matrix plotter")
     if len(group_centers) == 1:
         limits = plot["single_group_x_limits"]
     else:
         left_margin = abs(float(plot["x_limits"][0]))
-        right_margin = float(plot["x_limits"][1]) - (
-            (len(config.state_names) - 1) * group_spacing
-        )
         limits = [
             -left_margin,
-            group_centers[-1] + right_margin,
+            group_centers[-1] + left_margin,
         ]
     box_width = float(plot["box_width"])
     dataset_offset = float(plot["dataset_offset"])
@@ -392,7 +611,11 @@ def _render_parameter_plot(
             )
         )
         for dataset_index, dataset in enumerate(config.datasets):
-            direction = -1.0 if dataset_index == 0 else 1.0
+            direction = (
+                0.0
+                if len(config.datasets) == 1
+                else (-1.0 if dataset_index == 0 else 1.0)
+            )
             x_position = group_center + direction * dataset_offset
             matching_metadata = metadata_by_dataset[dataset][
                 metadata_by_dataset[dataset]["parameter"] == row.parameter
@@ -424,21 +647,39 @@ def _render_parameter_plot(
                 plot["dataset_colors"][dataset],
                 box_width,
             )
-            x_ticks.append((x_position, dataset))
+            dataset_label = plot.get("dataset_labels", {}).get(dataset, dataset)
+            x_ticks.append((x_position, dataset_label))
 
-    axis.set_xticks([x for x, _ in x_ticks], labels=[label for _, label in x_ticks])
-    axis.tick_params(axis="x", labelsize=int(plot["font_size"]), length=3, pad=1)
-    for group_center, label in group_labels:
-        axis.text(
-            group_center,
-            -0.10,
-            label,
-            transform=axis.get_xaxis_transform(),
-            ha="center",
-            va="top",
-            fontsize=int(plot["font_size"]),
-            clip_on=False,
+    if parameter_type in plot.get("log_scale_parameter_types", []):
+        axis.set_yscale("log")
+    if len(config.datasets) == 1:
+        axis.set_xticks(
+            [x for x, _ in group_labels],
+            labels=[label for _, label in group_labels],
         )
+    else:
+        axis.set_xticks([x for x, _ in x_ticks], labels=[label for _, label in x_ticks])
+        for group_center, label in group_labels:
+            axis.text(
+                group_center,
+                -0.10,
+                label,
+                transform=axis.get_xaxis_transform(),
+                ha="center",
+                va="top",
+                fontsize=int(plot["font_size"]),
+                clip_on=False,
+            )
+    axis.tick_params(
+        axis="x",
+        labelsize=(
+            int(plot["font_size"])
+            if len(config.datasets) == 1
+            else dataset_label_font_size
+        ),
+        length=3,
+        pad=1,
+    )
     axis.tick_params(axis="y", labelsize=int(plot["font_size"]), length=3, pad=1)
     axis.set_axisbelow(True)
     axis.grid(axis="y", color="0.87", linewidth=0.7, linestyle=":")
@@ -458,16 +699,27 @@ def _render_parameter_plot(
     return outputs
 
 
-def plot_sensitivity(config: PipelineConfig) -> list[Path]:
+def plot_profile_data(
+    config: PipelineConfig,
+    ranges: dict[str, pd.DataFrame],
+    metadata: dict[str, pd.DataFrame],
+) -> list[Path]:
     with matplotlib.rc_context(
         {
             "font.family": config.plotting["font_family"],
             "mathtext.fontset": config.plotting["math_fontset"],
         }
     ):
-        ranges, metadata = _load_plot_data(config)
         outputs = _render_sensitivity(config, ranges, metadata)
         for parameter_type, title, y_label in PARAMETER_PLOTS:
+            if (
+                parameter_type == "transition"
+                and config.plotting.get("transition_plot_style") == "heatmap"
+            ):
+                outputs.extend(
+                    _render_transition_heatmap_plot(config, metadata)
+                )
+                continue
             outputs.extend(
                 _render_parameter_plot(
                     config,
@@ -479,6 +731,11 @@ def plot_sensitivity(config: PipelineConfig) -> list[Path]:
                 )
             )
         return outputs
+
+
+def plot_sensitivity(config: PipelineConfig) -> list[Path]:
+    ranges, metadata = _load_plot_data(config)
+    return plot_profile_data(config, ranges, metadata)
 
 
 def main() -> None:
