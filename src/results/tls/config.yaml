@@ -28,6 +28,14 @@ tls_composite:
     metadata: composite_parameter_metadata.csv
   plotting:
     output_basename: TLS_vs_TLSC_composite_sensitivity_compact
+    leaf_state_counts_filename: tree_cell_state_counts.csv
+    population_size_output_basename: TLS_vs_TLSC_population_size
+    sampled_population_size_output_basename: TLS_vs_TLSC_sampled_population_size
+    population_size_boxplot_likelihood_fraction: 0.5
+    population_size_formats:
+      - pdf
+      - svg
+      - png
     parameter_output_basenames:
       birth: TLS_vs_TLSC_birth_rates
       death: TLS_vs_TLSC_death_rates

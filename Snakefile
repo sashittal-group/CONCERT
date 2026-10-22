@@ -34,6 +34,19 @@ tls_composite_plot_outputs = [
     for basename in tls_composite_figure_basenames
     for extension in tls_composite_plotting["formats"]
 ]
+tls_composite_leaf_count_table = str(
+    tls_composite_preprocessing_root
+    / tls_composite_plotting["leaf_state_counts_filename"]
+)
+tls_population_size_figure_basenames = [
+    tls_composite_plotting["population_size_output_basename"],
+    tls_composite_plotting["sampled_population_size_output_basename"],
+]
+tls_population_size_plot_outputs = [
+    str(tls_composite_figure_root / f"{basename}.{extension}")
+    for basename in tls_population_size_figure_basenames
+    for extension in tls_composite_plotting["population_size_formats"]
+]
 sgootr_profile_config = config["sgootr_profiles"]
 sgootr_profile_datasets = sgootr_profile_config["datasets"]
 sgootr_profile_files = sgootr_profile_config["files"]
@@ -181,6 +194,31 @@ rule all:
         # kptracer_profile_plot_outputs,
 
 
+rule tls_tree_cell_state_counts:
+    input:
+        settings="src/results/tls/config.yaml",
+        code=[
+            "src/results/tls/leaf_counts.py",
+            "src/results/tls/config.py",
+        ],
+        trees=expand(
+            str(
+                tls_composite_data_root
+                / "{dataset}"
+                / "processed_data"
+                / "trees.pkl"
+            ),
+            dataset=tls_composite_datasets,
+        ),
+    output:
+        tls_composite_leaf_count_table,
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.results.tls.leaf_counts "
+        "--config {input.settings:q}"
+
+
 rule tls_composite_preprocess:
     input:
         settings="src/results/tls/config.yaml",
@@ -253,6 +291,40 @@ rule tls_composite_plot:
         tls_composite_plot_outputs,
     shell:
         "python -m src.results.tls.plot --config {input.settings:q}"
+
+
+rule tls_population_size:
+    input:
+        settings="src/results/tls/config.yaml",
+        code=[
+            "src/results/tls/plot.py",
+            "src/results/tls/leaf_counts.py",
+            "src/results/tls/config.py",
+        ],
+        leaf_counts=tls_composite_leaf_count_table,
+        sampling_ranges=expand(
+            str(
+                tls_composite_data_root
+                / "figures"
+                / "{dataset}"
+                / "parameter_value_ranges.csv"
+            ),
+            dataset=tls_composite_datasets,
+        ),
+        sampling_metadata=expand(
+            str(
+                tls_composite_data_root
+                / "figures"
+                / "{dataset}"
+                / "parameter_metadata.csv"
+            ),
+            dataset=tls_composite_datasets,
+        ),
+    output:
+        tls_population_size_plot_outputs,
+    shell:
+        "python -m src.results.tls.plot --config {input.settings:q} "
+        "--population-size-only"
 
 
 rule sgootr_profile_preprocess:

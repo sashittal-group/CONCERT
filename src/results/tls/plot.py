@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Rectangle
+from matplotlib.ticker import StrMethodFormatter
 
 from src.results.tls.config import PipelineConfig, load_config
 
@@ -43,6 +44,12 @@ REQUIRED_METADATA_COLUMNS = {
     "parameter_type",
     "parameter_index",
     "original_value",
+}
+LEAF_COUNT_REQUIRED_COLUMNS = {
+    "dataset",
+    "tree_name",
+    "unlabeled_leaf_count",
+    "total_labeled_leaves",
 }
 
 
@@ -346,6 +353,298 @@ def _plot_panel(
             linewidth=1.0,
             zorder=1,
         )
+
+
+def _load_sampled_leaf_counts(
+    config: PipelineConfig,
+) -> dict[str, dict[str, int]]:
+    count_path = (
+        config.preprocessing_root
+        / config.plotting["leaf_state_counts_filename"]
+    )
+    counts = pd.read_csv(count_path)
+    _validate_columns(
+        counts,
+        LEAF_COUNT_REQUIRED_COLUMNS | set(config.state_names),
+        count_path,
+    )
+    count_columns = [
+        column
+        for column in counts.columns
+        if column
+        not in {
+            "dataset",
+            "tree_name",
+            "unlabeled_leaf_count",
+            "total_labeled_leaves",
+        }
+    ]
+    totals = counts[counts["tree_name"] == "TOTAL"]
+    sampled_counts = {}
+    for dataset in config.datasets:
+        dataset_totals = totals[totals["dataset"] == dataset]
+        if len(dataset_totals) != 1:
+            raise ValueError(
+                f"Expected one total count row for {dataset} in {count_path}; "
+                f"found {len(dataset_totals)}"
+            )
+        row = dataset_totals.iloc[0]
+        state_counts = {}
+        for column in count_columns:
+            value = float(row[column])
+            if not np.isfinite(value) or value < 0 or not value.is_integer():
+                raise ValueError(
+                    f"Invalid leaf count for {dataset}/{column} in {count_path}"
+                )
+            state_counts[column] = int(value)
+        total_labeled = float(row["total_labeled_leaves"])
+        if (
+            not np.isfinite(total_labeled)
+            or total_labeled < 0
+            or not total_labeled.is_integer()
+            or sum(state_counts.values()) != int(total_labeled)
+        ):
+            raise ValueError(
+                f"State counts do not match total labeled leaves for {dataset} "
+                f"in {count_path}"
+            )
+        sampled_counts[dataset] = state_counts
+    return sampled_counts
+
+
+def _render_population_size_profile(
+    config: PipelineConfig,
+    ranges_by_dataset: dict[str, pd.DataFrame],
+    metadata_by_dataset: dict[str, pd.DataFrame],
+    sampled_counts: dict[str, dict[str, int]],
+) -> list[Path]:
+    plot = config.plotting
+    font_size = int(plot["font_size"])
+    group_spacing = float(plot["group_spacing"])
+    box_width = float(plot["box_width"])
+    dataset_offsets = _dataset_offsets(
+        config.datasets,
+        float(plot["dataset_offset"]),
+    )
+    box_fraction = float(plot["population_size_boxplot_likelihood_fraction"])
+    whisker_fraction = float(plot["whisker_likelihood_fraction"])
+    group_centers = [
+        index * group_spacing for index, _ in enumerate(config.state_names)
+    ]
+
+    figure, axis = plt.subplots(figsize=tuple(plot["parameter_figsize"]))
+    x_ticks = []
+    for state_index, state in enumerate(config.state_names):
+        parameter = f"sampling[{state}]"
+        group_center = group_centers[state_index]
+        for dataset in config.datasets:
+            metadata = metadata_by_dataset[dataset]
+            matching_metadata = metadata[metadata["parameter"] == parameter]
+            if len(matching_metadata) != 1:
+                raise ValueError(
+                    f"Expected one {parameter} metadata row for {dataset}; "
+                    f"found {len(matching_metadata)}"
+                )
+            sampling_rate = float(matching_metadata["original_value"].iloc[0])
+            count = sampled_counts[dataset][state]
+            if not np.isfinite(sampling_rate) or sampling_rate <= 0:
+                raise ValueError(
+                    f"Invalid sampling rate for {dataset}/{state}: {sampling_rate}"
+                )
+
+            rate_box = _parameter_bounds(
+                ranges_by_dataset[dataset],
+                parameter,
+                box_fraction,
+                dataset,
+            )
+            rate_whiskers = _parameter_bounds(
+                ranges_by_dataset[dataset],
+                parameter,
+                whisker_fraction,
+                dataset,
+            )
+            if min(*rate_box, *rate_whiskers) <= 0:
+                raise ValueError(
+                    f"Sampling-rate profile for {dataset}/{state} is not positive"
+                )
+
+            _draw_profile_box(
+                axis,
+                group_center + dataset_offsets[dataset],
+                count / sampling_rate,
+                (count / rate_box[1], count / rate_box[0]),
+                (count / rate_whiskers[1], count / rate_whiskers[0]),
+                plot["dataset_colors"][dataset],
+                box_width,
+            )
+            dataset_label = plot.get("dataset_labels", {}).get(dataset, dataset)
+            x_ticks.append((group_center + dataset_offsets[dataset], dataset_label))
+
+    axis.set_title(
+        "Estimated population size",
+        fontsize=font_size,
+        fontweight="normal",
+        pad=5,
+    )
+    axis.set_ylabel("Population size", fontsize=font_size, labelpad=2)
+    axis.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+    axis.set_xlim(
+        -abs(float(plot["x_limits"][0])),
+        group_centers[-1] + abs(float(plot["x_limits"][0])),
+    )
+    axis.set_xticks([x for x, _ in x_ticks], labels=[label for _, label in x_ticks])
+    for center, state in zip(group_centers, config.state_names):
+        axis.text(
+            center,
+            -0.10,
+            state,
+            transform=axis.get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=int(plot["font_size"]),
+            clip_on=False,
+        )
+    axis.tick_params(
+        axis="x",
+        labelsize=int(plot.get("dataset_label_font_size", font_size)),
+        length=3,
+        pad=1,
+    )
+    axis.tick_params(axis="y", labelsize=font_size, length=3, pad=1)
+    axis.set_axisbelow(True)
+    axis.grid(axis="y", color="0.87", linewidth=0.7, linestyle=":")
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    axis.spines["left"].set_linewidth(1.1)
+    axis.spines["bottom"].set_linewidth(1.1)
+    figure.subplots_adjust(left=0.14, right=0.985, top=0.94, bottom=0.22)
+
+    output_base = (
+        config.figure_root / plot["population_size_output_basename"]
+    )
+    output_base.parent.mkdir(parents=True, exist_ok=True)
+    formats = plot["population_size_formats"]
+    if not isinstance(formats, list) or not formats:
+        raise ValueError("population_size_formats must be a non-empty list")
+    outputs = []
+    for extension in formats:
+        output = output_base.with_suffix(f".{extension}")
+        figure.savefig(
+            output,
+            bbox_inches="tight",
+            pad_inches=0.01,
+            dpi=200,
+        )
+        outputs.append(output)
+    plt.close(figure)
+    return outputs
+
+
+def _load_population_sampling_profiles(
+    config: PipelineConfig,
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    ranges_by_dataset = {}
+    metadata_by_dataset = {}
+    for dataset in config.datasets:
+        profile_dir = config.data_root / "figures" / dataset
+        ranges_path = profile_dir / "parameter_value_ranges.csv"
+        metadata_path = profile_dir / "parameter_metadata.csv"
+        ranges = pd.read_csv(ranges_path)
+        metadata = pd.read_csv(metadata_path)
+        _validate_columns(ranges, REQUIRED_RANGE_COLUMNS, ranges_path)
+        _validate_columns(metadata, REQUIRED_METADATA_COLUMNS, metadata_path)
+        ranges_by_dataset[dataset] = ranges
+        metadata_by_dataset[dataset] = metadata
+    return ranges_by_dataset, metadata_by_dataset
+
+
+def _render_sampled_population_size_plot(
+    config: PipelineConfig,
+    sampled_counts: dict[str, dict[str, int]],
+) -> list[Path]:
+    plot = config.plotting
+    font_size = int(plot["font_size"])
+    x_positions = np.arange(len(config.state_names), dtype=float)
+    dataset_offsets = _dataset_offsets(config.datasets, 0.12)
+    figure, axis = plt.subplots(figsize=tuple(plot["parameter_figsize"]))
+
+    for dataset in config.datasets:
+        values = [sampled_counts[dataset][state] for state in config.state_names]
+        positions = x_positions + dataset_offsets[dataset]
+        axis.scatter(
+            positions,
+            values,
+            s=70,
+            color=plot["dataset_colors"][dataset],
+            edgecolor="#303030",
+            linewidth=0.6,
+            label=dataset,
+            zorder=3,
+        )
+        for position, value in zip(positions, values):
+            axis.annotate(
+                f"{value:,}",
+                (position, value),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+            )
+
+    axis.set_title(
+        "Sampled population size",
+        fontsize=font_size,
+        fontweight="normal",
+        pad=5,
+    )
+    axis.set_xlabel("Cell state", fontsize=font_size, labelpad=3)
+    axis.set_ylabel("Sampled leaf count", fontsize=font_size, labelpad=2)
+    axis.set_xticks(x_positions, labels=config.state_names)
+    axis.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+    axis.set_ylim(bottom=0)
+    axis.tick_params(axis="both", labelsize=font_size, length=3, pad=2)
+    axis.set_axisbelow(True)
+    axis.grid(axis="y", color="0.87", linewidth=0.7, linestyle=":")
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    axis.spines["left"].set_linewidth(1.1)
+    axis.spines["bottom"].set_linewidth(1.1)
+    axis.legend(title="Dataset", frameon=False)
+    figure.tight_layout()
+
+    output = config.figure_root / (
+        f"{plot['sampled_population_size_output_basename']}"
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    formats = plot["population_size_formats"]
+    if not isinstance(formats, list) or not formats:
+        raise ValueError("population_size_formats must be a non-empty list")
+    outputs = []
+    for extension in formats:
+        figure_path = output.with_suffix(f".{extension}")
+        figure.savefig(
+            figure_path,
+            bbox_inches="tight",
+            pad_inches=0.01,
+            dpi=200,
+        )
+        outputs.append(figure_path)
+    plt.close(figure)
+    return outputs
+
+
+def plot_population_size_profiles(config: PipelineConfig) -> list[Path]:
+    ranges, metadata = _load_population_sampling_profiles(config)
+    sampled_counts = _load_sampled_leaf_counts(config)
+    outputs = _render_population_size_profile(
+        config,
+        ranges,
+        metadata,
+        sampled_counts,
+    )
+    outputs.extend(_render_sampled_population_size_plot(config, sampled_counts))
+    return outputs
 
 
 def _render_sensitivity(
@@ -753,8 +1052,18 @@ def main() -> None:
         type=Path,
         default=Path(__file__).resolve().with_name("config.yaml"),
     )
+    parser.add_argument(
+        "--population-size-only",
+        action="store_true",
+        help="Plot population-size profiles and sampled leaf-count dot plots.",
+    )
     args = parser.parse_args()
-    for output in plot_sensitivity(load_config(args.config)):
+    config = load_config(args.config)
+    if args.population_size_only:
+        outputs = plot_population_size_profiles(config)
+    else:
+        outputs = plot_sensitivity(config)
+    for output in outputs:
         print(f"Wrote {output}")
 
 
