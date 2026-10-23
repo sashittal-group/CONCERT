@@ -5,6 +5,7 @@ configfile: "src/results/kptracer/config.yaml"
 from pathlib import Path
 import sys
 import yaml
+from src.generate_coord_settings import SAMPLING_RATE, TRANSITION_TIME
 
 tls_composite_config_dir = Path("src/results/tls")
 
@@ -200,6 +201,11 @@ tls_fixed_sampling_transition_outputs = [
 ]
 tlsc_root = "data/troupe/TLSC"
 tlsc_tree_root = f"{tlsc_root}/subtrees_kept_states"
+tlsc_fixed_sampling_transition_root = f"{tlsc_root}/fixed_sampling_0.1"
+tlsc_fixed_sampling_transition_outputs = [
+    f"{tlsc_fixed_sampling_transition_root}/inference_transition_times_{count}.out"
+    for count in tls_fixed_sampling_transition_counts
+]
 sgootr_root = "data/sgootr/inference"
 sgootr_upgma_root = "data/sgootr/processed/upgma"
 sgootr_upgma_min_subtracted_root = "data/sgootr/processed/upgma_min_subtracted"
@@ -234,6 +240,20 @@ def setting_num_states(setting):
             if value:
                 return int(value.split()[0])
     raise ValueError(f"No state count found in {setting_file}")
+
+
+def generated_batch_inference_outputs(wildcards):
+    if not setting_ids:
+        raise FileNotFoundError(
+            f"No setting files found under {setting_root}; "
+            "run `python -m src.generate_coord_settings` first"
+        )
+    return expand(
+        f"{setting_root}/setting_{{setting}}/batch_{{batch}}/"
+        f"inference_transition_{TRANSITION_TIME}_sampling_{SAMPLING_RATE}.out",
+        setting=setting_ids,
+        batch=batch_indices,
+    )
 
 
 rule all:
@@ -928,6 +948,74 @@ rule infer_batch:
         "> {log.stdout:q} 2> {log.stderr:q}"
 
 
+rule infer_generated_batches:
+    input:
+        generated_batch_inference_outputs,
+
+
+rule infer_generated_batch:
+    input:
+        setting_file=f"{setting_root}/setting_{{setting}}/setting.txt",
+        nodes=lambda wildcards: expand(
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/nodes.csv",
+            tree=tree_indices,
+        ),
+        edges=lambda wildcards: expand(
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/edges.csv",
+            tree=tree_indices,
+        ),
+        transition_edges=transition_edges_file,
+    output:
+        out=(
+            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            f"inference_transition_{TRANSITION_TIME}_sampling_{SAMPLING_RATE}.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}"
+        ),
+        num_trees=trees_per_batch,
+        num_states=lambda wildcards: setting_num_states(wildcards.setting),
+        transition_time=TRANSITION_TIME,
+        sampling_rate=SAMPLING_RATE,
+    log:
+        optimization=(
+            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_transition_sampling.log"
+        ),
+        stdout=(
+            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_transition_sampling.stdout.log"
+        ),
+        stderr=(
+            f"{setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_transition_sampling.stderr.log"
+        ),
+    benchmark:
+        f"{setting_root}/setting_{{setting}}/batch_{{batch}}/"
+        "inference_transition_sampling.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "printf '%s\\n' {params.transition_time:q} "
+        "> \"$job_tmp/transition_times.txt\" && "
+        "python -m src.main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file \"$job_tmp/transition_times.txt\" "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--fixed-shared-sampling-probability {params.sampling_rate} "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
 rule infer_tls:
     input:
         nodes=[str(nodes_file) for nodes_file, _ in tls_tree_pairs],
@@ -1023,6 +1111,10 @@ rule infer_tls_transition_count_fixed_sampling_01:
         transition_times=lambda wildcards: (
             f"data/troupe/transition-times-{wildcards.transition_count}.txt"
         ),
+        initial_parameters=(
+            f"{tls_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.tmp.out"
+        ),
     output:
         out=(
             f"{tls_fixed_sampling_transition_root}/"
@@ -1056,10 +1148,72 @@ rule infer_tls_transition_count_fixed_sampling_01:
         "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
         "export TMPDIR=\"$job_tmp/tmp\" && "
         "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
-        "python -m src.main2 {params.tree_directory:q} "
+        "python -m src.continue_main2 {params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-edges-file {input.transition_edges:q} "
         "--transition-times-file {input.transition_times:q} "
+        "--initial-parameters {input.initial_parameters:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "--fixed-shared-sampling-probability 0.1 "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule tlsc_transition_count_fixed_sampling_01:
+    input:
+        tlsc_fixed_sampling_transition_outputs,
+
+
+rule infer_tlsc_transition_count_fixed_sampling_01:
+    input:
+        nodes=[str(nodes_file) for nodes_file, _ in tlsc_tree_pairs],
+        edges=[str(edges_file) for _, edges_file in tlsc_tree_pairs],
+        transition_edges=tls_transition_edges_file,
+        transition_times=lambda wildcards: (
+            f"data/troupe/transition-times-{wildcards.transition_count}.txt"
+        ),
+        initial_parameters=(
+            f"{tlsc_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.tmp.out"
+        ),
+    output:
+        out=(
+            f"{tlsc_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.out"
+        ),
+    params:
+        tree_directory=tlsc_tree_root,
+        num_trees=len(tlsc_tree_pairs),
+        num_states=3,
+    log:
+        optimization=(
+            f"{tlsc_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.log"
+        ),
+        stdout=(
+            f"{tlsc_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.stdout.log"
+        ),
+        stderr=(
+            f"{tlsc_fixed_sampling_transition_root}/"
+            "inference_transition_times_{transition_count}.stderr.log"
+        ),
+    benchmark:
+        f"{tlsc_fixed_sampling_transition_root}/inference_transition_times_{{transition_count}}.benchmark",
+    wildcard_constraints:
+        transition_count="5|10|15|20|25|30|50|100",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.continue_main2 {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--initial-parameters {input.initial_parameters:q} "
         "--output {output.out:q} --log {log.optimization:q} "
         "--device cpu --optimizer adam --normalize-root-likelihood "
         "--fixed-shared-sampling-probability 0.1 "

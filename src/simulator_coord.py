@@ -207,7 +207,7 @@ def _apply_scheduled_transitions(
         probabilities = transition_probabilities.loc[
             state,
             next_states,
-        ].to_numpy(dtype=float)
+        ].to_numpy(dtype=float, copy=True)
         probability_total = float(probabilities.sum())
         if (
             not np.all(np.isfinite(probabilities))

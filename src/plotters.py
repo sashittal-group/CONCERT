@@ -2,10 +2,10 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 
+from src.results.cell_state_colors import CELL_STATE_COLORS
+
 color_map = {
-    "NMPs": "orange",
-    "NeuralTube": "skyblue",
-    "Somite": "green",
+    **CELL_STATE_COLORS,
     "Endoderm": "yellow",
     "Endothelial": "blue",
     "PGCLC": "purple",

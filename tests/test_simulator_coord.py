@@ -102,6 +102,44 @@ class SimulatorCoordTests(unittest.TestCase):
         self.assertEqual(updated_alive, [(1, 3, "B"), (0, 2, "B")])
         self.assertEqual(next_node, 4)
 
+    def test_scheduled_transition_accepts_read_only_probabilities(self) -> None:
+        graph = nx.DiGraph()
+        graph.add_node(0, time=0.0, event="root", state="A")
+        graph.add_node(1, time=None, event=None, state="A")
+        graph.add_edge(
+            0,
+            1,
+            start_time=0.0,
+            end_time=None,
+            length=None,
+        )
+
+        differentiation_times = nx.DiGraph()
+        differentiation_times.add_node("A", transition_times=[1.0])
+        differentiation_times.add_node("B", transition_times=[])
+        differentiation_times.add_edge("A", "B")
+        probability_data = np.array([[0.0, 1.0], [0.0, 1.0]])
+        probability_data.setflags(write=False)
+        transition_probabilities = pd.DataFrame(
+            probability_data,
+            index=["A", "B"],
+            columns=["A", "B"],
+            copy=False,
+        )
+
+        updated_alive, next_node = _apply_scheduled_transitions(
+            graph=graph,
+            alive=[(0, 1, "A")],
+            differentiation_times=differentiation_times,
+            transition_probabilities=transition_probabilities,
+            transition_time=1.0,
+            next_node=2,
+            rng=np.random.default_rng(1),
+        )
+
+        self.assertEqual(updated_alive, [(1, 2, "B")])
+        self.assertEqual(next_node, 3)
+
     def test_seeded_simulation_does_not_change_global_random_state(self) -> None:
         differentiation_times = nx.DiGraph()
         differentiation_times.add_node("A", transition_times=[])

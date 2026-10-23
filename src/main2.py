@@ -27,7 +27,7 @@ torch.autograd.set_detect_anomaly(False)
 # ============================================================
 
 
-def parse_args():
+def parse_args(require_initial_parameters: bool = False):
     parser = argparse.ArgumentParser(
         description="PyTorch phylodynamic likelihood optimization"
     )
@@ -80,6 +80,13 @@ def parse_args():
         "--log",
         type=str,
         required=True,
+    )
+
+    parser.add_argument(
+        "--initial-parameters",
+        type=Path,
+        required=require_initial_parameters,
+        help="Initialize the optimizer from a previous .out or .tmp.out file.",
     )
 
     parser.add_argument(
@@ -379,14 +386,136 @@ def write_result(
         out.write("\n")
 
 
+def read_initial_parameters(
+    file_path: str | Path,
+    num_states: int,
+    free_edges: list[tuple[int, int]],
+) -> tuple[list[float], list[float], list[float], list[list[float]]]:
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Initial parameter file does not exist: {path}")
+    lines = path.read_text().splitlines()
+
+    vectors: dict[str, list[float]] = {}
+    for name in ("birth", "death", "sampling"):
+        matching_lines = [line for line in lines if line.startswith(f"{name}:")]
+        if len(matching_lines) != 1:
+            raise ValueError(
+                f"Expected one {name!r} vector in {path}; "
+                f"found {len(matching_lines)}"
+            )
+        try:
+            vector = [
+                float(value)
+                for value in matching_lines[0].split(":", 1)[1].split()
+            ]
+        except ValueError as error:
+            raise ValueError(f"Invalid {name!r} vector in {path}") from error
+        if len(vector) != num_states or not all(math.isfinite(value) for value in vector):
+            raise ValueError(
+                f"Expected {num_states} finite values in the {name!r} vector "
+                f"in {path}"
+            )
+        vectors[name] = vector
+    if any(
+        birth < death
+        for birth, death in zip(vectors["birth"], vectors["death"])
+    ):
+        raise ValueError(f"Initial birth rates must be at least death rates in {path}")
+    if any(not 0.0 < value < 1.0 for value in vectors["sampling"]):
+        raise ValueError(f"Initial sampling rates must be in (0, 1) in {path}")
+
+    transition_values: dict[tuple[int, int], float] = {}
+    in_transitions = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "transitions:":
+            in_transitions = True
+            continue
+        if stripped == "transition_times:":
+            in_transitions = False
+            continue
+        if not in_transitions or not stripped:
+            continue
+        match = re.fullmatch(
+            r"(\d+)->(\d+)\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)",
+            stripped,
+        )
+        if match is None:
+            continue
+        source, target, probability = match.groups()
+        edge = (int(source), int(target))
+        value = float(probability)
+        if edge in transition_values:
+            raise ValueError(f"Duplicate transition probability {edge} in {path}")
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"Invalid transition probability for {edge} in {path}")
+        transition_values[edge] = value
+
+    free_edge_set = set(free_edges)
+    off_diagonal_edges = {
+        edge for edge in transition_values if edge[0] != edge[1]
+    }
+    if off_diagonal_edges != free_edge_set:
+        missing_edges = sorted(free_edge_set - off_diagonal_edges)
+        unexpected_edges = sorted(off_diagonal_edges - free_edge_set)
+        raise ValueError(
+            f"Transition edges in {path} do not match the configured free edges; "
+            f"missing={missing_edges}, unexpected={unexpected_edges}"
+        )
+
+    initial_transition_probabilities = [
+        [0.0 for _ in range(num_states)] for _ in range(num_states)
+    ]
+    for source in range(num_states):
+        outgoing_probability = sum(
+            transition_values[edge]
+            for edge in free_edge_set
+            if edge[0] == source
+        )
+        diagonal_edge = (source, source)
+        diagonal_probability = transition_values.get(
+            diagonal_edge,
+            1.0 - outgoing_probability,
+        )
+        if diagonal_probability < -1e-8 or diagonal_probability > 1.0 + 1e-8:
+            raise ValueError(
+                f"Transition probabilities for state {source} do not form "
+                f"a valid row in {path}"
+            )
+        row_total = outgoing_probability + diagonal_probability
+        if not math.isclose(row_total, 1.0, rel_tol=0.0, abs_tol=1e-6):
+            raise ValueError(
+                f"Transition probabilities for state {source} do not sum to 1 "
+                f"in {path}"
+            )
+        initial_transition_probabilities[source][source] = max(
+            0.0,
+            diagonal_probability,
+        )
+
+    for edge in free_edges:
+        initial_transition_probabilities[edge[0]][edge[1]] = transition_values[edge]
+
+    return (
+        vectors["birth"],
+        vectors["death"],
+        vectors["sampling"],
+        initial_transition_probabilities,
+    )
+
+
 # ============================================================
 # MAIN
 # ============================================================
 
 
-def main(normalize_root_likelihood: bool | None = None):
+def main(
+    normalize_root_likelihood: bool | None = None,
+    require_initial_parameters: bool = False,
+):
 
-    args = parse_args()
+    args = parse_args(require_initial_parameters=require_initial_parameters)
     if args.fixed_shared_sampling_probability is not None:
         if not math.isfinite(args.fixed_shared_sampling_probability) or not (
             0.0 < args.fixed_shared_sampling_probability < 1.0
@@ -551,6 +680,18 @@ def main(normalize_root_likelihood: bool | None = None):
         initial_death_rates = None
         initial_sampling_probabilities = None
         initial_transition_probabilities = None
+        if args.initial_parameters is not None:
+            (
+                initial_birth_rates,
+                initial_death_rates,
+                initial_sampling_probabilities,
+                initial_transition_probabilities,
+            ) = read_initial_parameters(
+                args.initial_parameters,
+                num_states,
+                free_edges,
+            )
+            print(f"Initializing parameters from {args.initial_parameters}")
 
         # ====================================================
         # FIXED PARAMETERS
@@ -663,6 +804,7 @@ def main(normalize_root_likelihood: bool | None = None):
     except Exception as exc:
 
         print(f"Fatal error: {exc}")
+        raise
 
         raise
 
