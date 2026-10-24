@@ -68,6 +68,26 @@ sgootr_profile_plot_outputs = [
     for basename in sgootr_profile_figure_basenames
     for extension in sgootr_profile_plotting["formats"]
 ]
+sgootr_fixed_sampling_config_path = (
+    "src/results/sgootr/config_fixed_sampling_0.1.yaml"
+)
+with open(sgootr_fixed_sampling_config_path) as fixed_sampling_config_file:
+    sgootr_fixed_sampling_config = yaml.safe_load(fixed_sampling_config_file)[
+        "sgootr_profiles"
+    ]
+sgootr_fixed_sampling_root = Path("src/results/sgootr/fixed_sampling_0.1")
+sgootr_fixed_sampling_datasets = sgootr_fixed_sampling_config["datasets"]
+sgootr_fixed_sampling_files = sgootr_fixed_sampling_config["files"]
+sgootr_fixed_sampling_plotting = sgootr_fixed_sampling_config["plotting"]
+sgootr_fixed_sampling_figure_basenames = [
+    sgootr_fixed_sampling_plotting["output_basename"],
+    *sgootr_fixed_sampling_plotting["parameter_output_basenames"].values(),
+]
+sgootr_fixed_sampling_plot_outputs = [
+    str(sgootr_fixed_sampling_root / "figures" / f"{basename}.{extension}")
+    for basename in sgootr_fixed_sampling_figure_basenames
+    for extension in sgootr_fixed_sampling_plotting["formats"]
+]
 kptracer_profile_config = config["kptracer_profiles"]
 kptracer_profile_datasets = kptracer_profile_config["datasets"]
 kptracer_profile_files = kptracer_profile_config["files"]
@@ -615,6 +635,143 @@ rule sgootr_profile_plot:
         ),
     output:
         sgootr_profile_plot_outputs,
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.results.sgootr.plot --config {input.settings:q}"
+
+
+rule sgootr_fixed_sampling_01:
+    input:
+        sgootr_fixed_sampling_plot_outputs,
+
+
+rule infer_sgootr_fixed_sampling_01:
+    input:
+        nodes="data/sgootr/processed/{dataset}/nodes.csv",
+        edges="data/sgootr/processed/{dataset}/edges.csv",
+        transition_times="data/sgootr/processed/{dataset}/transition_times.txt",
+        per_edge_transition_times=(
+            "data/sgootr/processed/{dataset}/transition_times.csv"
+        ),
+        code=[
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+        ],
+    output:
+        out=(
+            "src/results/sgootr/fixed_sampling_0.1/inference/"
+            "{dataset}/inference.out"
+        ),
+    params:
+        tree_directory="data/sgootr/processed/{dataset}",
+        num_trees=1,
+        num_states=3,
+    log:
+        optimization=(
+            "src/results/sgootr/fixed_sampling_0.1/inference/"
+            "{dataset}/optimizer.log"
+        ),
+        stdout=(
+            "src/results/sgootr/fixed_sampling_0.1/inference/"
+            "{dataset}/inference.stdout.log"
+        ),
+        stderr=(
+            "src/results/sgootr/fixed_sampling_0.1/inference/"
+            "{dataset}/inference.stderr.log"
+        ),
+    benchmark:
+        "src/results/sgootr/fixed_sampling_0.1/inference/"
+        "{dataset}/inference.benchmark",
+    wildcard_constraints:
+        dataset="|".join(sgootr_fixed_sampling_datasets),
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "python -m src.main2_given_transitions {params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-times-file {input.transition_times:q} "
+        "--per-edge-transition-times-pattern "
+        "{input.per_edge_transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer lbfgs --no-stem "
+        "--fixed-shared-sampling-probability 0.1 "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule sgootr_fixed_sampling_profile_preprocess:
+    input:
+        settings=sgootr_fixed_sampling_config_path,
+        inference=(
+            "src/results/sgootr/fixed_sampling_0.1/inference/"
+            "{dataset}/inference.out"
+        ),
+        nodes="data/sgootr/processed/{dataset}/nodes.csv",
+        edges="data/sgootr/processed/{dataset}/edges.csv",
+        transition_times="data/sgootr/processed/{dataset}/transition_times.txt",
+        transition_events=(
+            "data/sgootr/processed/{dataset}/transition_times.csv"
+        ),
+        code=[
+            "src/results/sgootr/preprocess.py",
+            "src/results/sgootr/data.py",
+            "src/results/profile_tools.py",
+            "src/results/tls/config.py",
+            "src/results/tls/data.py",
+            "src/results/tls/likelihood.py",
+            "src/main2_given_transitions.py",
+            "src/mle2_given_transitions.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+        ],
+    output:
+        profiles=(
+            "src/results/sgootr/fixed_sampling_0.1/data/"
+            "{dataset}/parameter_profiles.csv"
+        ),
+        ranges=(
+            "src/results/sgootr/fixed_sampling_0.1/data/"
+            "{dataset}/parameter_value_ranges.csv"
+        ),
+        metadata=(
+            "src/results/sgootr/fixed_sampling_0.1/data/"
+            "{dataset}/parameter_metadata.csv"
+        ),
+    params:
+        python=sys.executable,
+    wildcard_constraints:
+        dataset="|".join(sgootr_fixed_sampling_datasets),
+    shell:
+        "{params.python:q} -m src.results.sgootr.preprocess "
+        "--config {input.settings:q} --dataset {wildcards.dataset:q}"
+
+
+rule sgootr_fixed_sampling_profile_plot:
+    input:
+        settings=sgootr_fixed_sampling_config_path,
+        code=[
+            "src/results/sgootr/plot.py",
+            "src/results/tls/plot.py",
+            "src/results/tls/config.py",
+        ],
+        ranges=expand(
+            "src/results/sgootr/fixed_sampling_0.1/data/"
+            "{dataset}/parameter_value_ranges.csv",
+            dataset=sgootr_fixed_sampling_datasets,
+        ),
+        metadata=expand(
+            "src/results/sgootr/fixed_sampling_0.1/data/"
+            "{dataset}/parameter_metadata.csv",
+            dataset=sgootr_fixed_sampling_datasets,
+        ),
+    output:
+        sgootr_fixed_sampling_plot_outputs,
     params:
         python=sys.executable,
     shell:

@@ -137,18 +137,70 @@ class PhylodynamicParameters(nn.Module):
         max_birth_rate: float = 10000000000.0,
         max_death_rate: float = 5000000000.0,
         shared_sampling_rate: bool = False,
+        num_trees: int | None = None,
+        per_tree_sampling_rates: bool = False,
+        per_tree_state_sampling_rates: bool = False,
+        per_tree_transition_rates: bool = False,
+        tree_transition_times: list[list[float]] | None = None,
+        tree_free_edges: list[list[tuple[int, int]]] | None = None,
     ):
         super().__init__()
 
         self.num_states = num_states
         self.free_edges = free_edges
         self.shared_sampling_rate = shared_sampling_rate
+        self.per_tree_sampling_rates = per_tree_sampling_rates
+        self.per_tree_state_sampling_rates = per_tree_state_sampling_rates
+        self.per_tree_transition_rates = per_tree_transition_rates
+        self.num_trees = num_trees
+        if per_tree_transition_rates:
+            if tree_free_edges is None:
+                self.tree_free_edges = [list(free_edges) for _ in range(num_trees or 0)]
+            elif num_trees is None or len(tree_free_edges) != num_trees:
+                raise ValueError(
+                    "Per-tree transition edges must be provided for every tree"
+                )
+            else:
+                self.tree_free_edges = [list(edges) for edges in tree_free_edges]
+            for edges in self.tree_free_edges:
+                if len(edges) != len(set(edges)):
+                    raise ValueError("Per-tree transition edges must be unique")
+                if any(edge not in free_edges for edge in edges):
+                    raise ValueError(
+                        "Per-tree transition edges must be included in free_edges"
+                    )
+        elif tree_free_edges is not None:
+            raise ValueError(
+                "Per-tree transition edges require per-tree transition rates"
+            )
+        else:
+            self.tree_free_edges = None
         self.transition_times = torch.as_tensor(
             given_transition_times,
             dtype=torch.float64,
             device=device,
         )
         self.device_ = device
+        if per_tree_transition_rates:
+            if num_trees is None or num_trees <= 0:
+                raise ValueError(
+                    "per-tree transition rates require a positive num_trees"
+                )
+            if tree_transition_times is None or len(tree_transition_times) != num_trees:
+                raise ValueError(
+                    "per-tree transition rates require transition times for "
+                    "every tree"
+                )
+            if any(not times for times in tree_transition_times):
+                raise ValueError(
+                    "Each tree must have at least one observed transition time"
+                )
+            self.tree_transition_times = [
+                torch.as_tensor(times, dtype=torch.float64, device=device)
+                for times in tree_transition_times
+            ]
+        else:
+            self.tree_transition_times = None
 
         self.max_birth_rate = max_birth_rate
         self.max_death_rate = max_death_rate
@@ -177,6 +229,27 @@ class PhylodynamicParameters(nn.Module):
 
         if initial_sampling_probabilities is None:
             initial_sampling_probabilities = [0.5] * num_states
+
+        if per_tree_sampling_rates or per_tree_state_sampling_rates:
+            if num_trees is None or num_trees <= 0:
+                raise ValueError(
+                    "per-tree sampling rates require a positive num_trees"
+                )
+            if per_tree_sampling_rates and per_tree_state_sampling_rates:
+                raise ValueError(
+                    "per-tree shared-state and per-tree state-specific sampling "
+                    "rates are mutually exclusive"
+                )
+            if shared_sampling_rate:
+                raise ValueError(
+                    "per-tree sampling rates cannot be combined with "
+                    "shared_sampling_rate"
+                )
+            if given_sampling_probabilities is not None:
+                raise ValueError(
+                    "per-tree sampling rates cannot be combined with fixed "
+                    "sampling probabilities"
+                )
 
         # ====================================================
         # BIRTH / DEATH
@@ -274,7 +347,29 @@ class PhylodynamicParameters(nn.Module):
                 device=device,
             )
 
-            if initial_sampling.numel() != num_states:
+            if per_tree_state_sampling_rates:
+                if initial_sampling.numel() == num_states:
+                    initial_sampling = initial_sampling.reshape(1, num_states).expand(
+                        num_trees, -1
+                    ).clone()
+                elif initial_sampling.numel() == num_trees * num_states:
+                    initial_sampling = initial_sampling.reshape(num_trees, num_states)
+                else:
+                    raise ValueError(
+                        "initial sampling probabilities must contain one value "
+                        "per tree and state"
+                    )
+            elif per_tree_sampling_rates:
+                if initial_sampling.numel() == num_states:
+                    initial_sampling = initial_sampling.mean().expand(num_trees).clone()
+                elif initial_sampling.numel() != num_trees:
+                    raise ValueError(
+                        "initial sampling probabilities must contain one value "
+                        "per tree"
+                    )
+                else:
+                    initial_sampling = initial_sampling.reshape(num_trees)
+            elif initial_sampling.numel() != num_states:
                 raise ValueError(
                     "initial_sampling_probabilities must " "have length num_states"
                 )
@@ -285,7 +380,9 @@ class PhylodynamicParameters(nn.Module):
                 1.0 - 1e-8,
             )
 
-            if shared_sampling_rate:
+            if per_tree_state_sampling_rates or per_tree_sampling_rates:
+                self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_sampling))
+            elif shared_sampling_rate:
                 initial_shared_sampling = initial_sampling.mean().reshape(1)
                 self.sampling_raw = nn.Parameter(inverse_sigmoid(initial_shared_sampling))
             else:
@@ -334,32 +431,21 @@ class PhylodynamicParameters(nn.Module):
         # ----------------------------------------------------
 
         transition_raw = []
-
-        # Diagonal
-        for i in range(num_states):
-
-            transition_raw.append(
-                torch.log(
-                    torch.clamp(
-                        initial_Q[i, i],
-                        min=1e-12,
-                    )
-                )
+        for _ in range(num_trees if per_tree_transition_rates else 1):
+            tree_transition_raw = [
+                torch.log(torch.clamp(initial_Q[i, i], min=1e-12))
+                for i in range(num_states)
+            ]
+            tree_transition_raw.extend(
+                torch.log(torch.clamp(initial_Q[i, j], min=1e-12))
+                for i, j in free_edges
             )
-
-        # Free edges
-        for i, j in free_edges:
-
-            transition_raw.append(
-                torch.log(
-                    torch.clamp(
-                        initial_Q[i, j],
-                        min=1e-12,
-                    )
-                )
-            )
-
-        self.transition_raw = nn.Parameter(torch.stack(transition_raw))
+            transition_raw.append(torch.stack(tree_transition_raw))
+        self.transition_raw = nn.Parameter(
+            torch.stack(transition_raw)
+            if per_tree_transition_rates
+            else transition_raw[0]
+        )
 
     # ========================================================
     # BIRTH RATES
@@ -395,9 +481,21 @@ class PhylodynamicParameters(nn.Module):
             return self.fixed_sampling_probabilities
 
         probabilities = torch.sigmoid(self.sampling_raw)
+        if self.per_tree_state_sampling_rates:
+            return probabilities
+        if self.per_tree_sampling_rates:
+            return probabilities[:, None].expand(-1, self.num_states)
         if self.shared_sampling_rate:
             return probabilities.expand(self.num_states)
         return probabilities
+
+    @property
+    def tree_sampling_probabilities(self) -> torch.Tensor | None:
+        if not (
+            self.per_tree_sampling_rates or self.per_tree_state_sampling_rates
+        ):
+            return None
+        return torch.sigmoid(self.sampling_raw)
 
     # ========================================================
     # TRANSITION PROBABILITIES
@@ -407,57 +505,44 @@ class PhylodynamicParameters(nn.Module):
     def transition_probabilities(
         self,
     ) -> torch.Tensor:
+        def build_matrix(
+            raw: torch.Tensor,
+            free_edges: list[tuple[int, int]],
+        ) -> torch.Tensor:
+            num_states = self.num_states
+            diagonal = raw[:num_states]
+            edge_values = raw[num_states:]
+            rows = []
+            for source in range(num_states):
+                logits = [diagonal[source]]
+                columns = [source]
+                for edge_source, target in free_edges:
+                    if edge_source == source:
+                        edge_index = self.free_edges.index((edge_source, target))
+                        logits.append(edge_values[edge_index])
+                        columns.append(target)
+                probabilities = torch.softmax(torch.stack(logits), dim=0)
+                column_indices = torch.tensor(
+                    columns,
+                    dtype=torch.long,
+                    device=self.device_,
+                )
+                row = torch.zeros(
+                    num_states,
+                    dtype=probabilities.dtype,
+                    device=self.device_,
+                ).scatter(0, column_indices, probabilities)
+                rows.append(row)
+            return torch.stack(rows, dim=0)
 
-        S = self.num_states
-
-        diag_raw = self.transition_raw[:S]
-        edge_raw = self.transition_raw[S:]
-
-        rows = []
-
-        for i in range(S):
-
-            logits = [diag_raw[i]]
-
-            columns = [i]
-
-            for k, (u, v) in enumerate(self.free_edges):
-
-                if u == i:
-
-                    logits.append(edge_raw[k])
-
-                    columns.append(v)
-
-            probabilities = torch.softmax(
-                torch.stack(logits),
-                dim=0,
+        if self.per_tree_transition_rates:
+            return torch.stack(
+                [
+                    build_matrix(raw, self.tree_free_edges[tree_index])
+                    for tree_index, raw in enumerate(self.transition_raw)
+                ]
             )
-
-            columns = torch.tensor(
-                columns,
-                dtype=torch.long,
-                device=self.device_,
-            )
-
-            row = torch.zeros(
-                S,
-                dtype=probabilities.dtype,
-                device=self.device_,
-            )
-
-            row = row.scatter(
-                0,
-                columns,
-                probabilities,
-            )
-
-            rows.append(row)
-
-        return torch.stack(
-            rows,
-            dim=0,
-        )
+        return build_matrix(self.transition_raw, self.free_edges)
 
 
 # ============================================================
@@ -472,6 +557,7 @@ def calculate_total_log_likelihood(
     static_transition_times: list[float] | None = None,
     normalize_root_likelihood: bool = False,
     no_stem: bool = False,
+    static_tree_transition_times: list[list[float]] | None = None,
 ) -> torch.Tensor:
     """
     Calculate the total log likelihood across all trees.
@@ -487,6 +573,11 @@ def calculate_total_log_likelihood(
 
     if static_transition_times is None:
         static_transition_times = transition_times.detach().cpu().tolist()
+    if static_tree_transition_times is None and params.tree_transition_times is not None:
+        static_tree_transition_times = [
+            times.detach().cpu().tolist()
+            for times in params.tree_transition_times
+        ]
 
     # --------------------------------------------------------
     # U / flow_U / Cs
@@ -496,6 +587,86 @@ def calculate_total_log_likelihood(
         float(tree.nodes[tree.graph["root"]]["T"])
         for tree in trees
     ]
+    if sampling_probabilities.ndim == 2 or transition_probabilities.ndim == 3:
+        if sampling_probabilities.ndim == 2:
+            expected_sampling_shape = (len(trees), params.num_states)
+            if tuple(sampling_probabilities.shape) != expected_sampling_shape:
+                raise ValueError(
+                    "Per-tree sampling probabilities must have shape "
+                    f"{expected_sampling_shape}; found "
+                    f"{tuple(sampling_probabilities.shape)}"
+                )
+        if transition_probabilities.ndim == 3:
+            expected_transition_shape = (
+                len(trees),
+                params.num_states,
+                params.num_states,
+            )
+            if tuple(transition_probabilities.shape) != expected_transition_shape:
+                raise ValueError(
+                    "Per-tree transition probabilities must have shape "
+                    f"{expected_transition_shape}; found "
+                    f"{tuple(transition_probabilities.shape)}"
+                )
+        if params.per_tree_transition_rates and (
+            static_tree_transition_times is None
+            or len(static_tree_transition_times) != len(trees)
+        ):
+            raise ValueError(
+                "Per-tree transition rates require transition times for each tree"
+            )
+        LL = torch.zeros((), device=device, dtype=torch.float64)
+        for tree_index, (tree, datastructure) in enumerate(zip(trees, datastructures)):
+            tree_sampling = (
+                sampling_probabilities[tree_index]
+                if sampling_probabilities.ndim == 2
+                else sampling_probabilities
+            )
+            tree_transitions = (
+                transition_probabilities[tree_index]
+                if transition_probabilities.ndim == 3
+                else transition_probabilities
+            )
+            tree_times = (
+                static_tree_transition_times[tree_index]
+                if params.per_tree_transition_rates
+                else static_transition_times
+            )
+            tree_transition_tensor = (
+                params.tree_transition_times[tree_index]
+                if params.per_tree_transition_rates
+                else transition_times
+            )
+            tree_u_result = calculate_Us(
+                birth_rates,
+                death_rates,
+                tree_sampling,
+                tree_transitions,
+                tree_transition_tensor,
+                root_times=[root_times[tree_index]],
+            )
+            result = calculate_log_likelihood(
+                datastructure,
+                birth_rates,
+                death_rates,
+                tree_transitions,
+                tree_sampling,
+                tree_u_result.Cs,
+                tree_times,
+            )
+            tree_log_likelihood = result[0, 0]
+            if no_stem:
+                tree_log_likelihood = crown_conditioned_root_log_likelihood(
+                    result[0],
+                    tree_u_result.root_U[0],
+                )
+            elif normalize_root_likelihood:
+                tree_log_likelihood -= torch.log1p(
+                    -tree_u_result.root_U[0, 0]
+                )
+            LL = LL + tree_log_likelihood
+        return LL
+
     U_result = calculate_Us(
         birth_rates,
         death_rates,
@@ -599,15 +770,35 @@ def log_iteration(
     logfile.write(" ".join(f"{x:.15g}" for x in death))
     logfile.write("\n")
 
-    logfile.write("sampling: ")
-    logfile.write(" ".join(f"{x:.15g}" for x in sampling))
-    logfile.write("\n")
+    if params.per_tree_sampling_rates or params.per_tree_state_sampling_rates:
+        logfile.write("sampling_by_tree:\n")
+        for tree_index, probabilities in enumerate(
+            params.tree_sampling_probabilities.detach().cpu().tolist()
+        ):
+            values = probabilities if isinstance(probabilities, list) else [probabilities]
+            logfile.write(
+                f"{tree_index}: "
+                + " ".join(f"{value:.15g}" for value in values)
+                + "\n"
+            )
+    elif sampling.ndim == 1:
+        logfile.write("sampling: ")
+        logfile.write(" ".join(f"{x:.15g}" for x in sampling))
+        logfile.write("\n")
 
     logfile.write("transitions:\n")
 
-    for i, j in params.free_edges:
-
-        logfile.write(f"{i}->{j} " f"{transitions[i, j]:.15g}\n")
+    if params.per_tree_transition_rates:
+        logfile.write("transition_probabilities_by_tree:\n")
+        for tree_index, tree_matrix in enumerate(transitions):
+            logfile.write(f"tree_{tree_index}:\n")
+            for i in range(params.num_states):
+                for j in range(params.num_states):
+                    if tree_matrix[i, j] > 0.0:
+                        logfile.write(f"{i}->{j} {tree_matrix[i, j]:.15g}\n")
+    else:
+        for i, j in params.free_edges:
+            logfile.write(f"{i}->{j} " f"{transitions[i, j]:.15g}\n")
 
     logfile.write("transition_times:\n")
 
@@ -616,6 +807,15 @@ def log_iteration(
         logfile.write(f"{t:.15g} ")
 
     logfile.write("\n\n")
+    if params.per_tree_transition_rates:
+        logfile.write("transition_times_by_tree:\n")
+        for tree_index, tree_times in enumerate(params.tree_transition_times):
+            values = tree_times.detach().cpu().tolist()
+            logfile.write(
+                f"tree_{tree_index}: "
+                + " ".join(f"{value:.15g}" for value in values)
+                + "\n"
+            )
     logfile.flush()
 
 
@@ -642,6 +842,14 @@ class LikelihoodModel(nn.Module):
         self.normalize_root_likelihood = normalize_root_likelihood
         self.no_stem = no_stem
         self.static_transition_times = params.transition_times.detach().cpu().tolist()
+        self.static_tree_transition_times = (
+            [
+                times.detach().cpu().tolist()
+                for times in params.tree_transition_times
+            ]
+            if params.tree_transition_times is not None
+            else None
+        )
 
     def forward(self):
 
@@ -652,6 +860,7 @@ class LikelihoodModel(nn.Module):
             static_transition_times=self.static_transition_times,
             normalize_root_likelihood=self.normalize_root_likelihood,
             no_stem=self.no_stem,
+            static_tree_transition_times=self.static_tree_transition_times,
         )
 
 
@@ -683,6 +892,11 @@ def optimize_parameters(
     normalize_root_likelihood: bool = False,
     no_stem: bool = False,
     shared_sampling_rate: bool = False,
+    per_tree_sampling_rates: bool = False,
+    per_tree_state_sampling_rates: bool = False,
+    per_tree_transition_rates: bool = False,
+    tree_transition_times: list[list[float]] | None = None,
+    tree_free_edges: list[list[tuple[int, int]]] | None = None,
 ):
 
     total_start = time.perf_counter()
@@ -724,6 +938,12 @@ def optimize_parameters(
         initial_transition_probabilities=(initial_transition_probabilities),
         given_transition_times=(given_transition_times),
         shared_sampling_rate=shared_sampling_rate,
+        num_trees=len(trees),
+        per_tree_sampling_rates=per_tree_sampling_rates,
+        per_tree_state_sampling_rates=per_tree_state_sampling_rates,
+        per_tree_transition_rates=per_tree_transition_rates,
+        tree_transition_times=tree_transition_times,
+        tree_free_edges=tree_free_edges,
     ).to(device)
     _timed_log("parameter construction", total_start, device)
 
@@ -763,9 +983,38 @@ def optimize_parameters(
             log_likelihood=LL.detach(),
             birth_rates=params.birth_rates.detach(),
             death_rates=params.death_rates.detach(),
-            sampling_probabilities=(params.sampling_probabilities.detach()),
-            transition_probabilities=(params.transition_probabilities.detach()),
+            sampling_probabilities=(
+                params.sampling_probabilities.detach().mean(dim=0)
+                if (
+                    params.per_tree_sampling_rates
+                    or params.per_tree_state_sampling_rates
+                )
+                else params.sampling_probabilities.detach()
+            ),
+            transition_probabilities=(
+                params.transition_probabilities.detach().mean(dim=0)
+                if params.per_tree_transition_rates
+                else params.transition_probabilities.detach()
+            ),
             transition_times=(params.transition_times.detach()),
+            tree_sampling_probabilities=(
+                params.tree_sampling_probabilities.detach()
+                if (
+                    params.per_tree_sampling_rates
+                    or params.per_tree_state_sampling_rates
+                )
+                else None
+            ),
+            tree_transition_probabilities=(
+                params.transition_probabilities.detach()
+                if params.per_tree_transition_rates
+                else None
+            ),
+            tree_transition_times=(
+                [times.detach().cpu().tolist() for times in params.tree_transition_times]
+                if params.per_tree_transition_rates
+                else None
+            ),
         )
 
     # ========================================================
@@ -1013,9 +1262,38 @@ def optimize_parameters(
         log_likelihood=final_LL.detach(),
         birth_rates=(params.birth_rates.detach().clone()),
         death_rates=(params.death_rates.detach().clone()),
-        sampling_probabilities=(params.sampling_probabilities.detach().clone()),
-        transition_probabilities=(params.transition_probabilities.detach().clone()),
+        sampling_probabilities=(
+            params.sampling_probabilities.detach().mean(dim=0).clone()
+            if (
+                params.per_tree_sampling_rates
+                or params.per_tree_state_sampling_rates
+            )
+            else params.sampling_probabilities.detach().clone()
+        ),
+        transition_probabilities=(
+            params.transition_probabilities.detach().mean(dim=0).clone()
+            if params.per_tree_transition_rates
+            else params.transition_probabilities.detach().clone()
+        ),
         transition_times=(params.transition_times.detach().clone()),
+        tree_sampling_probabilities=(
+            params.tree_sampling_probabilities.detach().clone()
+            if (
+                params.per_tree_sampling_rates
+                or params.per_tree_state_sampling_rates
+            )
+            else None
+        ),
+        tree_transition_probabilities=(
+            params.transition_probabilities.detach().clone()
+            if params.per_tree_transition_rates
+            else None
+        ),
+        tree_transition_times=(
+            [times.detach().cpu().tolist() for times in params.tree_transition_times]
+            if params.per_tree_transition_rates
+            else None
+        ),
     )
 
     print("\n==============================")

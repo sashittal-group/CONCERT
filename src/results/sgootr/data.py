@@ -21,9 +21,10 @@ from src.tree_utils import (
 def load_dataset_context(
     dataset_root: Path,
     state_names: tuple[str, ...],
+    inference_path: Path | None = None,
 ) -> DatasetContext:
     parameters = load_inference_parameters(
-        dataset_root / "inference_result.txt",
+        inference_path or dataset_root / "inference_result.txt",
         state_names,
     )
     with redirect_stdout(StringIO()):

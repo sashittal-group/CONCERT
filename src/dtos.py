@@ -148,6 +148,9 @@ class OptimizationResult:
     sampling_probabilities: torch.Tensor
     transition_probabilities: Optional[torch.Tensor] = None
     transition_times: Optional[torch.Tensor] = None
+    tree_sampling_probabilities: Optional[torch.Tensor] = None
+    tree_transition_probabilities: Optional[torch.Tensor] = None
+    tree_transition_times: Optional[list[list[float]]] = None
 
 
 # ============================================================

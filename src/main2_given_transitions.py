@@ -61,6 +61,16 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--per-tree-transition-edges-file",
+        type=str,
+        default=None,
+        help=(
+            "Tree-name keyed transition graph file; required entries are "
+            "labels such as CRC04: followed by whitespace-separated state pairs."
+        ),
+    )
+
+    parser.add_argument(
         "--transition-times-file",
         type=str,
         default="transition.txt",
@@ -119,6 +129,31 @@ def parse_args():
         "--shared-sampling-rate",
         action="store_true",
         help="Use one learned sampling probability shared by all states.",
+    )
+
+    parser.add_argument(
+        "--per-tree-sampling-rates",
+        action="store_true",
+        help=(
+            "Infer one sampling probability per tree, shared across all states."
+        ),
+    )
+
+    parser.add_argument(
+        "--per-tree-state-sampling-rates",
+        action="store_true",
+        help=(
+            "Infer a separate sampling probability for every tree and state."
+        ),
+    )
+
+    parser.add_argument(
+        "--per-tree-transition-rates",
+        action="store_true",
+        help=(
+            "Use each tree's observed transition epochs and infer a separate "
+            "transition matrix for that tree."
+        ),
     )
 
     parser.add_argument(
@@ -283,6 +318,54 @@ def read_free_edges(file_path: str) -> list[tuple[int, int]]:
     return free_edges
 
 
+def read_per_tree_transition_edges(
+    file_path: str | Path,
+) -> dict[str, list[tuple[int, int]]]:
+    path = Path(file_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Per-tree transition graph file does not exist: {path}")
+
+    edges_by_tree: dict[str, list[tuple[int, int]]] = {}
+    current_tree: str | None = None
+    with path.open() as graph_file:
+        for line_number, raw_line in enumerate(graph_file, start=1):
+            line = raw_line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            if line.endswith(":") and len(line.split()) == 1:
+                current_tree = line[:-1]
+                if not current_tree or current_tree in edges_by_tree:
+                    raise ValueError(
+                        f"Invalid or duplicate tree label at {path}:{line_number}"
+                    )
+                edges_by_tree[current_tree] = []
+                continue
+            if current_tree is None:
+                raise ValueError(
+                    f"Transition edge before tree label at {path}:{line_number}"
+                )
+            parts = line.split()
+            if len(parts) != 2:
+                raise ValueError(
+                    f"Malformed transition edge at {path}:{line_number}: {line}"
+                )
+            try:
+                edge = (int(parts[0]), int(parts[1]))
+            except ValueError as error:
+                raise ValueError(
+                    f"Malformed transition edge at {path}:{line_number}: {line}"
+                ) from error
+            if edge[0] == edge[1] or edge in edges_by_tree[current_tree]:
+                raise ValueError(
+                    f"Invalid or duplicate transition edge at {path}:{line_number}"
+                )
+            edges_by_tree[current_tree].append(edge)
+
+    if not edges_by_tree or any(not edges for edges in edges_by_tree.values()):
+        raise ValueError(f"Every tree in {path} must have at least one transition edge")
+    return edges_by_tree
+
+
 def read_transition_times(file_path: str) -> list[float]:
     path = Path(file_path)
     if not path.is_file():
@@ -411,9 +494,20 @@ def write_result(
 
     death = result.death_rates.detach().cpu().tolist()
 
-    sampling = result.sampling_probabilities.detach().cpu().tolist()
+    tree_sampling = (
+        result.tree_sampling_probabilities.detach().cpu().tolist()
+        if result.tree_sampling_probabilities is not None
+        else None
+    )
+    sampling_probabilities = result.sampling_probabilities.detach().cpu()
+    sampling = sampling_probabilities.tolist()
 
     transition_probabilities = result.transition_probabilities.detach().cpu().tolist()
+    tree_transition_probabilities = (
+        getattr(result, "tree_transition_probabilities", None).detach().cpu().tolist()
+        if getattr(result, "tree_transition_probabilities", None) is not None
+        else None
+    )
 
     transition_times = result.transition_times.detach().cpu().tolist()
 
@@ -449,6 +543,24 @@ def write_result(
             out.write(f"{x:.15g} ")
 
         out.write("\n")
+        if tree_sampling is not None:
+            per_state = isinstance(tree_sampling[0], list)
+            out.write(
+                "sampling_scope: "
+                + (
+                    "per_tree_by_state\n"
+                    if per_state
+                    else "per_tree_shared_across_states\n"
+                )
+            )
+            out.write("sampling_by_tree:\n")
+            for tree_index, probabilities in enumerate(tree_sampling):
+                values = probabilities if per_state else [probabilities]
+                out.write(
+                    f"tree_{tree_index}: "
+                    + " ".join(f"{value:.15g}" for value in values)
+                    + "\n"
+                )
 
         out.write("transitions:\n")
 
@@ -462,6 +574,17 @@ def write_result(
 
                     out.write(f"{i}->{j} " f"{p:.15g}\n")
 
+        if tree_transition_probabilities is not None:
+            out.write("transition_scope: per_tree\n")
+            out.write("transition_probabilities_by_tree:\n")
+            for tree_index, tree_matrix in enumerate(tree_transition_probabilities):
+                out.write(f"tree_{tree_index}:\n")
+                for i in range(num_states):
+                    for j in range(num_states):
+                        probability = tree_matrix[i][j]
+                        if probability > 0.0:
+                            out.write(f"{i}->{j} {probability:.15g}\n")
+
         out.write("transition_times:\n")
 
         for k, t in enumerate(transition_times):
@@ -469,6 +592,14 @@ def write_result(
             out.write(f"{k} {t:.15g}\n")
 
         out.write("\n")
+        if getattr(result, "tree_transition_times", None) is not None:
+            out.write("transition_times_by_tree:\n")
+            for tree_index, tree_times in enumerate(result.tree_transition_times):
+                out.write(
+                    f"tree_{tree_index}: "
+                    + " ".join(f"{value:.15g}" for value in tree_times)
+                    + "\n"
+                )
 
 
 # ============================================================
@@ -492,6 +623,34 @@ def main(normalize_root_likelihood: bool | None = None):
                 "--fixed-shared-sampling-probability cannot be combined with "
                 "--shared-sampling-rate."
             )
+        if args.per_tree_sampling_rates or args.per_tree_state_sampling_rates:
+            raise ValueError(
+                "--fixed-shared-sampling-probability cannot be combined with "
+                "per-tree sampling-rate options."
+            )
+    if (
+        (args.per_tree_sampling_rates or args.per_tree_state_sampling_rates)
+        and args.shared_sampling_rate
+    ):
+        raise ValueError(
+            "Per-tree sampling-rate options cannot be combined with "
+            "--shared-sampling-rate."
+        )
+    if args.per_tree_sampling_rates and args.per_tree_state_sampling_rates:
+        raise ValueError(
+            "--per-tree-sampling-rates and --per-tree-state-sampling-rates "
+            "are mutually exclusive."
+        )
+    if args.per_tree_transition_rates and not args.per_edge_transition_times_pattern:
+        raise ValueError(
+            "--per-tree-transition-rates requires "
+            "--per-edge-transition-times-pattern."
+        )
+    if args.per_tree_transition_edges_file and not args.per_tree_transition_rates:
+        raise ValueError(
+            "--per-tree-transition-edges-file requires "
+            "--per-tree-transition-rates."
+        )
 
     if normalize_root_likelihood is None:
         normalize_root_likelihood = args.normalize_root_likelihood
@@ -531,6 +690,12 @@ def main(normalize_root_likelihood: bool | None = None):
 
     if args.transition_edges_file:
         print("transition_edges_file=" f"{args.transition_edges_file}")
+    if args.per_tree_sampling_rates:
+        print("sampling_mode=per_tree_shared_across_states")
+    elif args.per_tree_state_sampling_rates:
+        print("sampling_mode=per_tree_by_state")
+    if args.per_tree_transition_rates:
+        print("transition_mode=per_tree_observed_times")
 
     print("STARTED ...")
 
@@ -554,6 +719,56 @@ def main(normalize_root_likelihood: bool | None = None):
             match = re.search(r"nodes_(\d+)", node_path.stem, flags=re.IGNORECASE)
             tree_index = int(match.group(1)) if match else tree_position
             tree_indices.append(tree_index)
+
+        tree_free_edges: list[list[tuple[int, int]]] | None = None
+        if args.per_tree_transition_edges_file:
+            tree_names_path = Path(args.directory) / "trees.txt"
+            if not tree_names_path.is_file():
+                raise FileNotFoundError(
+                    "Per-tree transition graphs require a trees.txt file in "
+                    f"{args.directory}"
+                )
+            tree_names = [
+                line.strip()
+                for line in tree_names_path.read_text().splitlines()
+                if line.strip()
+            ]
+            if len(tree_names) < len(tree_file_pairs) or len(
+                set(tree_names[: len(tree_file_pairs)])
+            ) != len(tree_file_pairs):
+                raise ValueError(
+                    f"{tree_names_path} must contain one unique name per loaded tree"
+                )
+            tree_names_by_index = {
+                tree_index: tree_names[position]
+                for position, tree_index in enumerate(tree_indices)
+            }
+            configured_tree_edges = read_per_tree_transition_edges(
+                args.per_tree_transition_edges_file
+            )
+            missing_graphs = sorted(
+                set(tree_names_by_index.values()) - set(configured_tree_edges)
+            )
+            if missing_graphs:
+                raise ValueError(
+                    "Per-tree transition graph file is missing trees: "
+                    + ", ".join(missing_graphs)
+                )
+            tree_free_edges = [
+                configured_tree_edges[tree_names_by_index[index]]
+                for index in tree_indices
+            ]
+            invalid_edges = [
+                edge
+                for edges in tree_free_edges
+                for edge in edges
+                if any(state < 0 or state >= num_states for state in edge)
+            ]
+            if invalid_edges:
+                raise ValueError(
+                    f"Per-tree transition graph contains state indices outside "
+                    f"0..{num_states - 1}: {invalid_edges}"
+                )
 
         if args.per_edge_transition_times_pattern:
             if (
@@ -618,7 +833,30 @@ def main(normalize_root_likelihood: bool | None = None):
         # FREE TRANSITION EDGES
         # ====================================================
 
-        if args.transition_edges_file:
+        if tree_free_edges is not None:
+            free_edges = sorted(
+                {edge for tree_edges in tree_free_edges for edge in tree_edges}
+            )
+            if args.transition_edges_file:
+                shared_edges = set(read_free_edges(args.transition_edges_file))
+                if shared_edges != set(free_edges):
+                    raise ValueError(
+                        "--transition-edges-file must equal the union of the "
+                        "per-tree transition graphs"
+                    )
+            for tree_index, tree_edges in zip(tree_indices, tree_free_edges):
+                observed_edges = {
+                    (source, target)
+                    for events in per_edge_transition_data.get(tree_index, {}).values()
+                    for source, target, _ in events
+                }
+                disallowed_edges = observed_edges - set(tree_edges)
+                if disallowed_edges:
+                    raise ValueError(
+                        f"Tree {tree_index} has observed transitions not allowed "
+                        f"by its graph: {sorted(disallowed_edges)}"
+                    )
+        elif args.transition_edges_file:
             free_edges = read_free_edges(args.transition_edges_file)
         elif per_edge_transition_data:
             free_edges = sorted(
@@ -636,6 +874,9 @@ def main(normalize_root_likelihood: bool | None = None):
             )
 
         print(f"Loaded {len(free_edges)} " f"free transition edges")
+        if tree_free_edges is not None:
+            for tree_index, tree_edges in zip(tree_indices, tree_free_edges):
+                print(f"tree_{tree_index}_transition_edges={tree_edges}")
 
         # ====================================================
         # TRANSITION EPOCHS
@@ -645,7 +886,32 @@ def main(normalize_root_likelihood: bool | None = None):
         if transition_times[0] == 0.0:
             transition_times = transition_times[1:]
 
-        if per_edge_transition_data:
+        tree_transition_times: list[list[float]] | None = None
+        if args.per_tree_transition_rates:
+            tree_transition_times = []
+            for tree_index in tree_indices:
+                if tree_index not in per_edge_transition_data:
+                    raise ValueError(
+                        "Per-tree transition rates require transition event data "
+                        f"for tree {tree_index}."
+                    )
+                observed_times = sorted(
+                    {
+                        transition_time
+                        for events in per_edge_transition_data[tree_index].values()
+                        for _, _, transition_time in events
+                        if transition_time > 0.0
+                    }
+                )
+                if not observed_times:
+                    raise ValueError(
+                        f"Tree {tree_index} has no positive transition event times."
+                    )
+                tree_transition_times.append(observed_times)
+            transition_times = sorted(
+                {time for tree_times in tree_transition_times for time in tree_times}
+            )
+        elif per_edge_transition_data:
             event_times = {
                 event[2]
                 for transitions_by_edge in per_edge_transition_data.values()
@@ -674,16 +940,21 @@ def main(normalize_root_likelihood: bool | None = None):
 
         print(f"transition_times={transition_times}")
 
-        tree_transition_times = []
         cut_trees = []
         for tree in trees:
             root_time = float(tree.nodes[tree.graph["root"]]["T"])
+            base_transition_times = (
+                tree_transition_times[len(cut_trees)]
+                if tree_transition_times is not None
+                else transition_times
+            )
             local_transition_times = [
                 transition_time
-                for transition_time in transition_times
+                for transition_time in base_transition_times
                 if transition_time < root_time
             ]
-            tree_transition_times.append(local_transition_times)
+            if tree_transition_times is not None:
+                tree_transition_times[len(cut_trees)] = local_transition_times
             cut_trees.append(cut_tree(tree, local_transition_times))
 
         for ct in cut_trees:
@@ -698,8 +969,13 @@ def main(normalize_root_likelihood: bool | None = None):
 
 
         dats = []
+        datastructure_transition_times = (
+            tree_transition_times
+            if tree_transition_times is not None
+            else [transition_times] * len(cut_trees)
+        )
         for tree_index, ((levels, hierarchy), local_transition_times) in zip(
-            tree_indices, zip(cut_trees, tree_transition_times)
+            tree_indices, zip(cut_trees, datastructure_transition_times)
         ):
             dats.append(
                 get_datastructure_for_likelihood_calculation(
@@ -775,6 +1051,11 @@ def main(normalize_root_likelihood: bool | None = None):
             normalize_root_likelihood=normalize_root_likelihood,
             no_stem=args.no_stem,
             shared_sampling_rate=args.shared_sampling_rate,
+            per_tree_sampling_rates=args.per_tree_sampling_rates,
+            per_tree_state_sampling_rates=args.per_tree_state_sampling_rates,
+            per_tree_transition_rates=args.per_tree_transition_rates,
+            tree_transition_times=tree_transition_times,
+            tree_free_edges=tree_free_edges,
         )
         # ====================================================
         # PRINT RESULT
@@ -804,6 +1085,11 @@ def main(normalize_root_likelihood: bool | None = None):
             "sampling:",
             result.sampling_probabilities.detach().cpu().numpy(),
         )
+        if result.tree_sampling_probabilities is not None:
+            print("sampling_by_tree:")
+            print(
+                result.tree_sampling_probabilities.detach().cpu().numpy(),
+            )
 
         print("transitions:")
 
@@ -816,6 +1102,17 @@ def main(normalize_root_likelihood: bool | None = None):
                 if Q[i, j] > 0.0:
 
                     print(f"{i}->{j} " f"{Q[i, j]:.15f}")
+
+        if result.tree_transition_probabilities is not None:
+            print("transitions_by_tree:")
+            for tree_index, tree_matrix in enumerate(
+                result.tree_transition_probabilities.detach().cpu().numpy()
+            ):
+                print(f"tree_{tree_index}:")
+                for i in range(num_states):
+                    for j in range(num_states):
+                        if tree_matrix[i, j] > 0.0:
+                            print(f"{i}->{j} {tree_matrix[i, j]:.15f}")
 
         print(
             "transition_times:",

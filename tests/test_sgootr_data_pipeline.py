@@ -29,6 +29,14 @@ class SgootrDataPipelineTests(unittest.TestCase):
         self.assertEqual(stage.graph.number_of_nodes(), 5)
         self.assertEqual(stage.graph.number_of_edges(), 4)
         self.assertEqual(stage.graph.in_degree(stage.root), 0)
+        self.assertEqual(
+            {
+                data["label"]: data["state_id"]
+                for _, data in stage.graph.nodes(data=True)
+                if data["is_leaf"]
+            },
+            {"gray_a": 0, "blue_a": 1, "orange_a": 2},
+        )
 
         with TemporaryDirectory() as temporary_directory:
             output_dir = Path(temporary_directory) / "input"
@@ -45,6 +53,41 @@ class SgootrDataPipelineTests(unittest.TestCase):
             exported_tree = Phylo.read(outputs["tree"], "newick")
             self.assertIsNone(exported_tree.root.branch_length)
             self.assertNotIn("stem", {clade.name for clade in exported_tree.find_clades()})
+
+    def test_all_sgootr_tip_colors_map_to_distinct_states(self) -> None:
+        tree = Phylo.read(
+            StringIO(
+                "(gray_a:1,blue_a:1,orange_a:1,red_a:1,purple_a:1,green_a:1);"
+            ),
+            "newick",
+        )
+
+        stage = build_tree_representation(tree)
+
+        state_by_label = {
+            data["label"]: data["state"]
+            for _, data in stage.graph.nodes(data=True)
+            if data["is_leaf"]
+        }
+        self.assertEqual(
+            state_by_label,
+            {
+                "gray_a": "NC",
+                "blue_a": "PT",
+                "orange_a": "LN",
+                "red_a": "ML",
+                "purple_a": "MO",
+                "green_a": "MP",
+            },
+        )
+        self.assertEqual(
+            {
+                data["state_id"]
+                for _, data in stage.graph.nodes(data=True)
+                if data["is_leaf"]
+            },
+            set(range(6)),
+        )
 
     def test_birth_shift_enforces_floor_without_changing_tip_dates(self) -> None:
         shifted_tree = shift_birth_events(self.tree, 0.025)

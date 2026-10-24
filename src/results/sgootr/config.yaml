@@ -39,22 +39,25 @@ sgootr_profiles:
     boxplot_likelihood_fraction: 0.1
     whisker_likelihood_fraction: 1.0e-5
     figsize:
-      - 14.0
+      - 16.0
       - 4.2
+    composite_bottom: 0.25
+    composite_wspace: 0.08
     parameter_figsize:
-      - 6.5
+      - 5.8
       - 4.2
     group_spacing: 1.15
-    dataset_offset: 0.23
-    box_width: 0.34
+    dataset_offset: 0.42
+    box_width: 0.14
     x_limits:
-      - -0.48
-      - 2.78
+      - -0.50
+      - 2.80
     single_group_x_limits:
       - -0.52
       - 0.52
     font_size: 16
     dataset_label_font_size: 13
+    dataset_label_rotation: 45
     font_family: Arial
     math_fontset: stixsans
     dataset_colors:
@@ -62,6 +65,10 @@ sgootr_profiles:
       transition_anchored: "#e49a78"
       upgma_min_subtracted_height_1: "#7b9e69"
       upgma_min_subtracted_height_1_transition_cut_upgma: "#b07aa1"
+    state_colors:
+      NC: "#6f91bd"
+      PT: "#e49a78"
+      LN: "#7b9e69"
     dataset_labels:
       birth_shifted_min_branch: "Min BL"
       transition_anchored: "Rational"

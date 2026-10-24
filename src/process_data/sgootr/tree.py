@@ -19,8 +19,22 @@ from Bio.Phylo.BaseTree import Clade, Tree
 from src.plotters import draw_ultrametric_tree
 
 
-STATE_ID_BY_NAME = {"NC": 0, "PT": 1, "LN": 2}
-STATE_NAME_BY_PREFIX = {"gray": "NC", "blue": "PT", "orange": "LN"}
+STATE_ID_BY_NAME = {
+    "NC": 0,
+    "PT": 1,
+    "LN": 2,
+    "ML": 3,
+    "MO": 4,
+    "MP": 5,
+}
+STATE_NAME_BY_PREFIX = {
+    "gray": "NC",
+    "blue": "PT",
+    "orange": "LN",
+    "red": "ML",
+    "purple": "MO",
+    "green": "MP",
+}
 NODE_COLUMNS = ("node_id", "T", "is_leaf", "state_id")
 EDGE_COLUMNS = ("parent", "child", "branch_length")
 TRANSITION_COLUMNS = (

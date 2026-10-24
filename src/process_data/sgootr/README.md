@@ -10,6 +10,71 @@ The input defaults to `data/sgootr/CRC11.nwk`; LSD2 and MACH2 are resolved from
 `PATH` or the project `.venv`. Override paths and processing parameters with
 the CLI options shown by `--help`.
 
+Terminal labels map to states as follows: `gray=NC`, `blue=PT`, `orange=LN`,
+`red=ML`, `purple=MO`, and `green=MP`. The original CRC11 colors retain their
+existing state IDs; the additional states support the trees in
+`data/sgootr/all_trees/`.
+
+To run the four tree-processing stages for every available SGOOTR all-tree
+input, run from the repository root:
+
+```bash
+for tree in data/sgootr/all_trees/S*/CRC*/tree.nwk; do
+  relative_tree="${tree#data/sgootr/all_trees/}"
+  output_root="data/sgootr/all_trees/processed/${relative_tree%/tree.nwk}"
+  .venv/bin/python -m src.process_data.sgootr.pipeline \
+    --input-tree "$tree" --output-root "$output_root" \
+    --birth-minimum-branch-length 0.01 \
+    --post-transition-terminal-floor 0.01
+done
+```
+
+Each tree is processed independently under its `S10` or `S15` patient folder.
+The four stages are `input`, `ultrametric`, `birth_shifted_min_branch`, and
+`transition_anchored`. The batch uses 0.01 for both branch-length floors
+because the CRC11 default of 0.025 cannot preserve tip dates for every tree.
+
+To run the minimum-distance-subtracted UPGMA stage for every processed input
+tree:
+
+```bash
+for tree in data/sgootr/all_trees/S*/CRC*/tree.nwk; do
+  relative_tree="${tree#data/sgootr/all_trees/}"
+  dataset_root="data/sgootr/all_trees/processed/${relative_tree%/tree.nwk}"
+  .venv/bin/python -m src.process_data.sgootr.upgma \
+    --input-tree "$dataset_root/input/tree.nwk" \
+    --output-dir "$dataset_root/upgma_min_subtracted" \
+    --subtract-minimum-distance
+done
+```
+
+This writes the UPGMA tree, adjusted distance matrix, node/edge tables,
+transition-time files, and plot under each tree's
+`upgma_min_subtracted/` folder.
+
+To plot the combined fixed-sampling inference with TLS-style parameter panels
+and a transition-probability heatmap:
+
+```bash
+.venv/bin/python -m src.results.sgootr.plot_combined_inference \
+  data/sgootr/all_trees/combined_inference/S10_upgma_min_subtracted/inference_fixed_sampling_0.1.txt
+```
+
+This writes composite and individual parameter figures in PDF and SVG under
+the inference result's `figures/` folder.
+
+To calculate fixed-sampling profile likelihoods for the combined inference
+and render TLS-style interval plots:
+
+```bash
+.venv/bin/python -m src.results.sgootr.profile_combined_inference \
+  data/sgootr/all_trees/combined_inference/S10_upgma_min_subtracted/inference_fixed_sampling_0.1.txt
+```
+
+The profile grid and likelihood thresholds follow `config.yaml`. Sampling
+remains fixed at 0.1; its plot shows a point rather than a profiled interval.
+Profile tables are written to `profiles/data/` and figures to `profiles/figures/`.
+
 To construct an ultrametric tree by UPGMA from the already exported input tree,
 run the dedicated preprocessor:
 
