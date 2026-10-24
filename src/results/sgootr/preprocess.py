@@ -530,6 +530,8 @@ def _profile_likelihoods(
     context: DatasetContext,
     profile: ParameterProfile,
     config: PipelineConfig,
+    *,
+    no_stem: bool = True,
 ) -> np.ndarray:
     values = []
     for candidate in profile.values:
@@ -543,7 +545,7 @@ def _profile_likelihoods(
             evaluate_total_log_likelihood(
                 context,
                 *parameters,
-                no_stem=True,
+                no_stem=no_stem,
             )
         )
     return np.asarray(values, dtype=float)

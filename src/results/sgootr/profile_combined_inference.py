@@ -93,6 +93,8 @@ def load_combined_dataset_context(
     input_dir: Path,
     inference_path: Path,
     state_names: tuple[str, ...],
+    *,
+    use_per_edge_transition_data: bool = True,
 ) -> DatasetContext:
     parameters = load_inference_parameters(inference_path, state_names)
     tree_file_pairs = find_tree_file_pairs(input_dir)
@@ -121,7 +123,11 @@ def load_combined_dataset_context(
         tree_index = int(match.group(1)) if match else tree_position
         transition_path = input_dir / f"transition_times_{tree_index}.csv"
         with redirect_stdout(StringIO()):
-            transition_data = load_per_edge_transition_data(transition_path)
+            transition_data = (
+                load_per_edge_transition_data(transition_path)
+                if use_per_edge_transition_data
+                else None
+            )
             nodes = load_nodes(str(node_path))
             edges = load_edges(str(edge_path))
             tree = prepare_nx_tree(nodes, edges)
@@ -238,6 +244,7 @@ def _plot_config(
     sampling_mode: str,
     tree_names: tuple[str, ...] | None = None,
     include_rate_ratio_profiles: bool = True,
+    transition_times_only: bool = False,
 ) -> PipelineConfig:
     plotting = dict(config.plotting)
     suffix = {
@@ -302,6 +309,8 @@ def _plot_config(
     )
     if sampling_mode in {"per_tree_state", "per_tree_transition"}:
         plotting["parameter_figsize"] = [9.9, 4.2]
+        plotting["formats"] = ["pdf", "svg", "png"]
+    if transition_times_only:
         plotting["formats"] = ["pdf", "svg", "png"]
     if sampling_mode == "per_tree_transition":
         plotting["transition_parameter_figsize"] = [15.5, 4.8]
@@ -693,8 +702,17 @@ def _plot_sampling_ratio_profile_intervals_by_tree(
             if match is not None
         }
     )
+    tree_specific = bool(tree_indices)
     if not tree_indices:
-        return []
+        if (
+            len(config.plotting.get("tree_names", [])) != 1
+            or not all(
+                f"sampling_ratio[{state_name}/NC]" in set(parameters["parameter"])
+                for state_name in ("PT", "LN")
+            )
+        ):
+            return []
+        tree_indices = [0]
 
     tree_names = config.plotting.get("tree_names", [])
     columns = 3
@@ -716,6 +734,8 @@ def _plot_sampling_ratio_profile_intervals_by_tree(
         for position, state_name in enumerate(("PT", "LN")):
             parameter_name = (
                 f"sampling_ratio[tree_{tree_index},{state_name}/NC]"
+                if tree_specific
+                else f"sampling_ratio[{state_name}/NC]"
             )
             matching = parameters[parameters["parameter"] == parameter_name]
             if len(matching) != 1:
@@ -753,7 +773,6 @@ def _plot_sampling_ratio_profile_intervals_by_tree(
         axis.set_title(tree_name, fontsize=12, fontweight="normal")
         axis.set_xticks((0, 1), labels=("PT/NC", "LN/NC"))
         axis.set_xlim(-0.5, 1.5)
-        axis.set_yscale("log")
         axis.grid(axis="y", color="0.87", linewidth=0.7, linestyle=":")
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
@@ -783,6 +802,8 @@ def profile_combined_inference(
     input_dir: Path,
     output_dir: Path,
     config: PipelineConfig,
+    *,
+    transition_times_only: bool = False,
 ) -> list[Path]:
     cohort_name = _cohort_name(inference_path)
     parameters = load_inference_parameters(inference_path, config.state_names)
@@ -822,6 +843,7 @@ def profile_combined_inference(
         input_dir,
         inference_path,
         config.state_names,
+        use_per_edge_transition_data=not transition_times_only,
     )
     baseline = evaluate_total_log_likelihood(
         context,
@@ -829,7 +851,7 @@ def profile_combined_inference(
         context.death_rates,
         context.sampling_probabilities,
         context.transition_probabilities,
-        no_stem=True,
+        no_stem=not transition_times_only,
     )
     fitted_log_likelihood = _read_log_likelihood(inference_path)
     if not np.isclose(baseline, fitted_log_likelihood, rtol=1e-8, atol=1e-8):
@@ -850,7 +872,12 @@ def profile_combined_inference(
     range_rows = []
     metadata_rows = []
     for profile in profiles:
-        likelihoods = _profile_likelihoods(context, profile, config)
+        likelihoods = _profile_likelihoods(
+            context,
+            profile,
+            config,
+            no_stem=not transition_times_only,
+        )
         profile_data, ranges = profile_rows(
             dataset_name,
             profile,
@@ -896,9 +923,11 @@ def profile_combined_inference(
             _read_tree_names(input_dir, len(context.sensitivity_inputs))
             if sampling_mode
             in {"per_tree", "per_tree_state", "per_tree_transition"}
+            or transition_times_only
             else None
         ),
         include_rate_ratio_profiles=True,
+        transition_times_only=transition_times_only,
     )
     outputs = plot_profile_data(
         plot_config,
@@ -1000,6 +1029,14 @@ def main() -> None:
         type=Path,
         default=Path(__file__).resolve().with_name("config.yaml"),
     )
+    parser.add_argument(
+        "--transition-times-only",
+        action="store_true",
+        help=(
+            "Profile the main2.py likelihood using common transition epochs "
+            "without per-edge transition assignments or crown conditioning."
+        ),
+    )
     arguments = parser.parse_args()
     input_dir = arguments.input_dir or arguments.inference.parent
     output_dir = arguments.output_dir or arguments.inference.parent / "profiles"
@@ -1009,6 +1046,7 @@ def main() -> None:
         input_dir,
         output_dir,
         config,
+        transition_times_only=arguments.transition_times_only,
     )
 
 

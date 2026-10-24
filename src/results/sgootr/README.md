@@ -55,6 +55,10 @@ for cohort in S10 S15; do
 done
 ```
 
+For inference run with `src.main2` using only global transition-time epochs,
+add `--transition-times-only` to the profile command. This skips per-edge
+transition assignments and uses the same unconditioned likelihood as `main2`.
+
 Sampling is inferred independently for NC, PT, and LN because neither a fixed
 sampling probability nor a shared-sampling option is supplied. The agreed
 transition graph (NC->PT, PT->LN, LN->PT, NC->LN), per-edge histories, common
