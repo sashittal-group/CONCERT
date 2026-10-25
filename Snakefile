@@ -7,6 +7,8 @@ import sys
 import yaml
 from src.generate_coord_settings import SAMPLING_RATE, TRANSITION_TIME
 
+python_executable = sys.executable
+
 tls_composite_config_dir = Path("src/results/tls")
 
 
@@ -193,7 +195,7 @@ tls_transition_inference_outputs = [
     f"{tls_root}/inference_transition_times_{count}.out"
     for count in tls_transition_counts
 ]
-tls_fixed_sampling_transition_counts = (5, 10, 15, 20, 25, 30, 50, 100)
+tls_fixed_sampling_transition_counts = (5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 200)
 tls_fixed_sampling_transition_root = f"{tls_root}/fixed_sampling_0.1"
 tls_fixed_sampling_transition_outputs = [
     f"{tls_fixed_sampling_transition_root}/inference_transition_times_{count}.out"
@@ -1124,6 +1126,7 @@ rule infer_tls_transition_count_fixed_sampling_01:
         tree_directory=tls_tree_root,
         num_trees=len(tls_tree_pairs),
         num_states=3,
+        python=python_executable,
     log:
         optimization=(
             f"{tls_fixed_sampling_transition_root}/"
@@ -1140,7 +1143,7 @@ rule infer_tls_transition_count_fixed_sampling_01:
     benchmark:
         f"{tls_fixed_sampling_transition_root}/inference_transition_times_{{transition_count}}.benchmark",
     wildcard_constraints:
-        transition_count="5|10|15|20|25|30|50|100",
+        transition_count="5|10|15|20|25|30|40|50|75|100|200",
     shell:
         "job_tmp=$(mktemp -d) && "
         "trap 'rm -rf \"$job_tmp\"' EXIT && "
@@ -1148,7 +1151,7 @@ rule infer_tls_transition_count_fixed_sampling_01:
         "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
         "export TMPDIR=\"$job_tmp/tmp\" && "
         "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
-        "python -m src.continue_main2 {params.tree_directory:q} "
+        "{params.python:q} -m src.continue_main2 {params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-edges-file {input.transition_edges:q} "
         "--transition-times-file {input.transition_times:q} "
@@ -1185,6 +1188,7 @@ rule infer_tlsc_transition_count_fixed_sampling_01:
         tree_directory=tlsc_tree_root,
         num_trees=len(tlsc_tree_pairs),
         num_states=3,
+        python=python_executable,
     log:
         optimization=(
             f"{tlsc_fixed_sampling_transition_root}/"
@@ -1201,7 +1205,7 @@ rule infer_tlsc_transition_count_fixed_sampling_01:
     benchmark:
         f"{tlsc_fixed_sampling_transition_root}/inference_transition_times_{{transition_count}}.benchmark",
     wildcard_constraints:
-        transition_count="5|10|15|20|25|30|50|100",
+        transition_count="5|10|15|20|25|30|40|50|75|100|200",
     shell:
         "job_tmp=$(mktemp -d) && "
         "trap 'rm -rf \"$job_tmp\"' EXIT && "
@@ -1209,7 +1213,7 @@ rule infer_tlsc_transition_count_fixed_sampling_01:
         "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
         "export TMPDIR=\"$job_tmp/tmp\" && "
         "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
-        "python -m src.continue_main2 {params.tree_directory:q} "
+        "{params.python:q} -m src.continue_main2 {params.tree_directory:q} "
         "--num-states {params.num_states} --num-trees {params.num_trees} "
         "--transition-edges-file {input.transition_edges:q} "
         "--transition-times-file {input.transition_times:q} "
