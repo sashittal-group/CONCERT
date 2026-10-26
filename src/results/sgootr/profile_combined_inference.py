@@ -123,6 +123,7 @@ def load_combined_dataset_context(
     state_names: tuple[str, ...],
     *,
     use_per_edge_transition_data: bool = True,
+    allow_stem_root: bool = False,
 ) -> DatasetContext:
     parameters = load_inference_parameters(inference_path, state_names)
     tree_file_pairs = find_tree_file_pairs(input_dir)
@@ -161,9 +162,12 @@ def load_combined_dataset_context(
             tree = prepare_nx_tree(nodes, edges)
 
         root = tree.graph["root"]
-        if tree.out_degree(root) != 2:
+        if tree.out_degree(root) != 2 and not (
+            allow_stem_root and tree.out_degree(root) == 1
+        ):
             raise ValueError(
-                f"{node_path} must have a stem-free binary crown root."
+                f"{node_path} must have a binary crown root"
+                f"{' or a single stem root' if allow_stem_root else ''}."
             )
         invalid_leaf_states = [
             node.state
@@ -185,19 +189,24 @@ def load_combined_dataset_context(
         local_transition_times = [
             time for time in candidate_times if time < root_time
         ]
+        data_structure_times = (
+            local_transition_times
+            if use_per_edge_transition_data
+            else parameters.transition_times
+        )
         levels, hierarchy = cut_tree(tree, local_transition_times)
         with redirect_stdout(StringIO()):
             datastructure = get_datastructure_for_likelihood_calculation(
                 levels,
                 hierarchy,
-                local_transition_times,
+                data_structure_times,
                 len(state_names),
                 per_edge_transition_data=transition_data,
             )
         sensitivity_inputs.append(
             SubtreeLikelihoodInput(
                 root_time,
-                local_transition_times,
+                data_structure_times,
                 datastructure,
             )
         )

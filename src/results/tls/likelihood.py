@@ -14,7 +14,12 @@ def evaluate_total_log_likelihood(
     sampling_probabilities: torch.Tensor,
     transition_probabilities: torch.Tensor,
     no_stem: bool = False,
+    normalize_root_likelihood: bool = False,
 ) -> float:
+    if no_stem and normalize_root_likelihood:
+        raise ValueError(
+            "Crown conditioning cannot be combined with root-likelihood normalization"
+        )
     transition_times = torch.tensor(context.transition_times, dtype=torch.float64)
     if sampling_probabilities.ndim == 2 or transition_probabilities.ndim == 3:
         if sampling_probabilities.ndim == 2:
@@ -83,11 +88,14 @@ def evaluate_total_log_likelihood(
                 Cs=u_result.Cs,
                 transition_times=tree_times,
             )
+            root_log_likelihood = likelihood_by_root_state[0, 0]
             if no_stem:
                 root_log_likelihood = crown_conditioned_root_log_likelihood(
                     likelihood_by_root_state[0],
                     u_result.root_U[0],
                 )
+            elif normalize_root_likelihood:
+                root_log_likelihood -= torch.log1p(-u_result.root_U[0, 0])
             else:
                 root_log_likelihood = likelihood_by_root_state[0, 0]
             total += float(root_log_likelihood)
@@ -112,11 +120,14 @@ def evaluate_total_log_likelihood(
             Cs=u_result.Cs[:len(subtree.transition_times) + 1],
             transition_times=subtree.transition_times,
         )
+        root_log_likelihood = likelihood_by_root_state[0, 0]
         if no_stem:
             root_log_likelihood = crown_conditioned_root_log_likelihood(
                 likelihood_by_root_state[0],
                 u_result.root_U[tree_index],
             )
+        elif normalize_root_likelihood:
+            root_log_likelihood -= torch.log1p(-u_result.root_U[tree_index, 0])
         else:
             root_log_likelihood = likelihood_by_root_state[0, 0]
         total += float(root_log_likelihood)

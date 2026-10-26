@@ -81,6 +81,7 @@ def _death_rate_profiles(
     for index, state_name in enumerate(config.state_names):
         death = float(context.death_rates[index])
         upper = float(context.birth_rates[index]) - config.rate_epsilon
+        lower = min(config.rate_epsilon, death / 10.0)
         name = f"death[{state_name}]"
         profiles.append(
             ParameterProfile(
@@ -90,7 +91,7 @@ def _death_rate_profiles(
                 death,
                 parameter_grid(
                     death,
-                    config.rate_epsilon,
+                    lower,
                     upper,
                     config.profile_grid_points,
                     name,
@@ -291,11 +292,19 @@ def _candidate_parameters(
 def _profile_likelihoods(
     context: DatasetContext,
     profile: ParameterProfile,
+    *,
+    normalize_root_likelihood: bool = False,
 ) -> np.ndarray:
     values = []
     for candidate in profile.values:
         parameters = _candidate_parameters(context, profile, float(candidate))
-        values.append(evaluate_total_log_likelihood(context, *parameters))
+        values.append(
+            evaluate_total_log_likelihood(
+                context,
+                *parameters,
+                normalize_root_likelihood=normalize_root_likelihood,
+            )
+        )
     return np.asarray(values, dtype=float)
 
 

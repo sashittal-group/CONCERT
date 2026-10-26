@@ -145,6 +145,7 @@ def _parse_tree_sampling_probabilities(
 
 def _parse_transition_matrix(lines: list[str], num_states: int, path: Path) -> torch.Tensor:
     probabilities = torch.zeros((num_states, num_states), dtype=torch.float64)
+    diagonal_entries = set()
     in_transitions = False
     for line in lines:
         line = line.strip()
@@ -166,6 +167,15 @@ def _parse_transition_matrix(lines: list[str], num_states: int, path: Path) -> t
             if source_index >= num_states or target_index >= num_states:
                 raise ValueError(f"Transition index outside matrix dimensions in {path}")
             probabilities[source_index, target_index] = float(probability)
+            if source_index == target_index:
+                diagonal_entries.add(source_index)
+
+    for state in range(num_states):
+        if state not in diagonal_entries:
+            off_diagonal_sum = float(probabilities[state].sum())
+            if off_diagonal_sum > 1.0:
+                raise ValueError(f"Transition matrix in {path} is not row-stochastic")
+            probabilities[state, state] = 1.0 - off_diagonal_sum
 
     if not torch.allclose(
         probabilities.sum(dim=1),
