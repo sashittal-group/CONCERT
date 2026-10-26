@@ -66,13 +66,41 @@ def _read_log_likelihood(path: Path) -> float:
 
 
 def _cohort_name(inference_path: Path) -> str:
-    match = re.match(r"^(S\d+)_", inference_path.parent.name)
-    if match is None:
+    for directory in inference_path.parents:
+        match = re.match(r"^(S\d+)(?:_|$)", directory.name)
+        if match is not None:
+            return match.group(1)
+    raise ValueError(
+        "Expected an inference parent directory to begin with a cohort "
+        f"label such as S10 or S15: {inference_path.parent}"
+    )
+
+
+def _config_with_likelihood_drops(
+    config: PipelineConfig,
+    likelihood_drops: tuple[float, ...],
+) -> PipelineConfig:
+    drops = tuple(sorted(float(drop) for drop in likelihood_drops))
+    if (
+        len(drops) < 2
+        or len(set(drops)) != len(drops)
+        or any(not math.isfinite(drop) or drop <= 0.0 for drop in drops)
+    ):
         raise ValueError(
-            "Expected the combined inference directory to begin with a cohort "
-            f"label such as S10 or S15: {inference_path.parent}"
+            "At least two unique, finite, positive likelihood drops are required."
         )
-    return match.group(1)
+    fractions = tuple(math.exp(-drop) for drop in drops)
+    if any(not 0.0 < fraction < 1.0 for fraction in fractions):
+        raise ValueError("Likelihood drops must convert to fractions in (0, 1).")
+
+    plotting = dict(config.plotting)
+    plotting["boxplot_likelihood_fraction"] = fractions[-2]
+    plotting["whisker_likelihood_fraction"] = fractions[-1]
+    return replace(
+        config,
+        likelihood_fractions=fractions,
+        plotting=plotting,
+    )
 
 
 def _read_tree_names(input_dir: Path, expected_count: int) -> tuple[str, ...]:
@@ -247,6 +275,11 @@ def _plot_config(
     transition_times_only: bool = False,
 ) -> PipelineConfig:
     plotting = dict(config.plotting)
+    figure_identity = cohort_name
+    dataset_label = f"Combined {cohort_name}"
+    if transition_times_only and tree_names is not None and len(tree_names) == 1:
+        figure_identity = f"{cohort_name}_{tree_names[0]}"
+        dataset_label = f"{tree_names[0]} ({cohort_name})"
     suffix = {
         "fixed": "fixed_sampling_0.1",
         "inferred": "inferred_sampling",
@@ -257,35 +290,35 @@ def _plot_config(
     plotting.update(
         {
             "output_basename": (
-                f"SGOOTR_combined_{cohort_name}_{suffix}_composite_sensitivity"
+                f"SGOOTR_combined_{figure_identity}_{suffix}_composite_sensitivity"
             ),
             "parameter_output_basenames": {
                 "birth": (
-                    f"SGOOTR_combined_{cohort_name}_{suffix}_birth_rates"
+                    f"SGOOTR_combined_{figure_identity}_{suffix}_birth_rates"
                 ),
                 "death": (
-                    f"SGOOTR_combined_{cohort_name}_{suffix}_death_rates"
+                    f"SGOOTR_combined_{figure_identity}_{suffix}_death_rates"
                 ),
                 "transition": (
-                    f"plot_2_SGOOTR_combined_{cohort_name}_{suffix}_"
+                    f"plot_2_SGOOTR_combined_{figure_identity}_{suffix}_"
                     "transition_probabilities"
                 ),
                 "sampling": (
-                    f"SGOOTR_combined_{cohort_name}_{suffix}_sampling_rates"
+                    f"SGOOTR_combined_{figure_identity}_{suffix}_sampling_rates"
                 ),
             },
             "sampling_ratio_output_basename": (
-                f"plot_3_SGOOTR_combined_{cohort_name}_{suffix}_"
+                f"plot_3_SGOOTR_combined_{figure_identity}_{suffix}_"
                 "sampling_rate_ratio_profiles"
             ),
             "birth_ratio_output_basename": (
-                f"SGOOTR_combined_{cohort_name}_{suffix}_birth_rate_ratio_profiles"
+                f"SGOOTR_combined_{figure_identity}_{suffix}_birth_rate_ratio_profiles"
             ),
             "ratio_interval_output_basename": (
-                f"SGOOTR_combined_{cohort_name}_{suffix}_rate_ratio_profile_intervals"
+                f"SGOOTR_combined_{figure_identity}_{suffix}_rate_ratio_profile_intervals"
             ),
             "dataset_colors": {dataset_name: "#6f91bd"},
-            "dataset_labels": {dataset_name: f"Combined {cohort_name}"},
+            "dataset_labels": {dataset_name: dataset_label},
             "composite_panel_types": [
                 "growth",
                 "transition",
@@ -425,6 +458,12 @@ def _plot_ratio_profiles(
                     linestyle="--",
                     linewidth=1.0,
                 )
+                axis.axvline(
+                    1.0,
+                    color="0.4",
+                    linestyle="--",
+                    linewidth=1.0,
+                )
                 x_limits.append(
                     (
                         max(float(values[0]), original_value / 50.0),
@@ -506,6 +545,12 @@ def _plot_ratio_profiles(
                     linestyle="--",
                     linewidth=1.0,
                     label=f"fitted ratio = {original_value:.3g}",
+                )
+                axis.axvline(
+                    1.0,
+                    color="0.4",
+                    linestyle="--",
+                    linewidth=1.0,
                 )
                 axis.axhline(0.0, color="#555555", linewidth=0.8)
                 axis.set_xscale("log")
@@ -660,6 +705,13 @@ def _plot_ratio_profile_intervals(
         )
         axis.set_title(title, fontsize=font_size, fontweight="normal", pad=5)
         axis.set_ylabel(y_label, fontsize=font_size, labelpad=2)
+        axis.axhline(
+            1.0,
+            color="0.4",
+            linestyle="--",
+            linewidth=1.0,
+            zorder=1,
+        )
         axis.tick_params(axis="both", labelsize=font_size, length=3, pad=2)
         axis.set_axisbelow(True)
         axis.grid(axis="y", color="0.87", linewidth=0.7, linestyle=":")
@@ -770,6 +822,13 @@ def _plot_sampling_ratio_profile_intervals_by_tree(
             if tree_index < len(tree_names)
             else f"Tree {tree_index}"
         )
+        axis.axhline(
+            1.0,
+            color="0.4",
+            linestyle="--",
+            linewidth=1.0,
+            zorder=1,
+        )
         axis.set_title(tree_name, fontsize=12, fontweight="normal")
         axis.set_xticks((0, 1), labels=("PT/NC", "LN/NC"))
         axis.set_xlim(-0.5, 1.5)
@@ -845,6 +904,16 @@ def profile_combined_inference(
         config.state_names,
         use_per_edge_transition_data=not transition_times_only,
     )
+    tree_names = (
+        _read_tree_names(input_dir, len(context.sensitivity_inputs))
+        if transition_times_only
+        else None
+    )
+    if tree_names is not None and len(tree_names) == 1:
+        dataset_name = (
+            f"combined_{cohort_name}_{tree_names[0]}_"
+            f"{sampling_mode}_transition_times_only"
+        )
     baseline = evaluate_total_log_likelihood(
         context,
         context.birth_rates,
@@ -919,11 +988,11 @@ def profile_combined_inference(
         dataset_name,
         cohort_name,
         sampling_mode,
-        (
+        tree_names
+        or (
             _read_tree_names(input_dir, len(context.sensitivity_inputs))
             if sampling_mode
             in {"per_tree", "per_tree_state", "per_tree_transition"}
-            or transition_times_only
             else None
         ),
         include_rate_ratio_profiles=True,
@@ -1037,10 +1106,28 @@ def main() -> None:
             "without per-edge transition assignments or crown conditioning."
         ),
     )
+    parser.add_argument(
+        "--likelihood-drops",
+        type=float,
+        nargs="+",
+        help=(
+            "Override profile interval thresholds with positive "
+            "delta-log-likelihood drops. This affects only the current run."
+        ),
+    )
     arguments = parser.parse_args()
     input_dir = arguments.input_dir or arguments.inference.parent
     output_dir = arguments.output_dir or arguments.inference.parent / "profiles"
     config = load_config(arguments.config, section="sgootr_profiles")
+    if arguments.likelihood_drops is not None:
+        config = _config_with_likelihood_drops(
+            config,
+            tuple(arguments.likelihood_drops),
+        )
+        print(
+            "Using profile likelihood drops Δlog L="
+            f"{tuple(sorted(arguments.likelihood_drops))}."
+        )
     profile_combined_inference(
         arguments.inference,
         input_dir,

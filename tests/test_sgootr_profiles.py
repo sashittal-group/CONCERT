@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 import torch
+import matplotlib.pyplot as plt
 
 from src.results.sgootr.preprocess import (
     _birth_ratio_profiles,
@@ -23,9 +26,11 @@ from src.results.tls.plot import (
     _dataset_offsets,
     _parameter_group_label,
     _profile_box_color,
+    _plot_panel,
     _render_grouped_sampling_profiles,
 )
 from src.results.sgootr.profile_combined_inference import (
+    _config_with_likelihood_drops,
     _cohort_name,
     _plot_config,
     _plot_ratio_profiles,
@@ -54,6 +59,91 @@ class SgootrProfileTests(unittest.TestCase):
             transition_times=[0.25, 0.75],
             sensitivity_inputs=[],
         )
+
+    def test_likelihood_drop_override_is_local_to_the_profile_run(self) -> None:
+        drops = (0.1, 0.25, 0.5, 1.0)
+
+        local_config = _config_with_likelihood_drops(self.config, drops)
+
+        expected_fractions = tuple(math.exp(-drop) for drop in drops)
+        self.assertEqual(self.config.likelihood_fractions, (0.5, 0.1, 1e-5, 1e-10, 1e-25))
+        self.assertTrue(
+            all(
+                abs(actual - expected) < 1e-12
+                for actual, expected in zip(
+                    local_config.likelihood_fractions,
+                    expected_fractions,
+                )
+            )
+        )
+        self.assertAlmostEqual(
+            local_config.plotting["boxplot_likelihood_fraction"],
+            math.exp(-0.5),
+        )
+        self.assertAlmostEqual(
+            local_config.plotting["whisker_likelihood_fraction"],
+            math.exp(-1.0),
+        )
+
+    def test_likelihood_drop_override_rejects_invalid_values(self) -> None:
+        for drops in ((), (0.5,), (0.5, 0.5), (0.0, 1.0), (-0.5, 1.0)):
+            with self.subTest(drops=drops):
+                with self.assertRaisesRegex(ValueError, "likelihood drops"):
+                    _config_with_likelihood_drops(self.config, drops)
+
+    def test_relative_ratio_composite_panel_marks_one(self) -> None:
+        dataset = "ratio_profile"
+        parameter = "birth_ratio[PT/NC]"
+        plotting = dict(self.config.plotting)
+        plotting["dataset_colors"] = {dataset: "#6f91bd"}
+        config = replace(
+            self.config,
+            datasets=(dataset,),
+            plotting=plotting,
+        )
+        ranges = pd.DataFrame(
+            [
+                {
+                    "parameter": parameter,
+                    "likelihood_fraction": fraction,
+                    "lower_parameter_value": lower,
+                    "higher_parameter_value": higher,
+                }
+                for fraction, lower, higher in (
+                    (0.1, 1.4, 1.6),
+                    (1e-5, 1.3, 1.7),
+                )
+            ]
+        )
+        metadata = pd.DataFrame(
+            [
+                {
+                    "parameter": parameter,
+                    "parameter_type": "birth_ratio",
+                    "parameter_index": 1,
+                    "original_value": 1.5,
+                }
+            ]
+        )
+        figure, axis = plt.subplots()
+        _plot_panel(
+            axis,
+            "Relative birth rates",
+            "birth_ratio",
+            "Relative birth rate",
+            {dataset: ranges},
+            {dataset: metadata},
+            config,
+        )
+
+        self.assertTrue(
+            any(
+                list(line.get_ydata()) == [1.0, 1.0]
+                and line.get_linestyle() == "--"
+                for line in axis.lines
+            )
+        )
+        plt.close(figure)
 
     def test_profiles_include_observed_sgootr_transition_edges(self) -> None:
         profiles = build_parameter_profiles(self.context, self.config)
@@ -490,6 +580,22 @@ class SgootrProfileTests(unittest.TestCase):
             float(combined_plotting["box_width"]),
         )
         self.assertIn("SGOOTR_combined_S15", combined_plotting["output_basename"])
+        crc11_plotting = _plot_config(
+            self.config,
+            Path("crc11_profiles"),
+            "combined_S10_CRC11_inferred_transition_times_only",
+            "S10",
+            "inferred",
+            ("CRC11",),
+            transition_times_only=True,
+        ).plotting
+        self.assertIn("S10_CRC11", crc11_plotting["output_basename"])
+        self.assertEqual(
+            crc11_plotting["dataset_labels"][
+                "combined_S10_CRC11_inferred_transition_times_only"
+            ],
+            "CRC11 (S10)",
+        )
         inferred_plotting = _plot_config(
             self.config,
             Path("inferred_profiles"),
@@ -553,6 +659,15 @@ class SgootrProfileTests(unittest.TestCase):
             _cohort_name(Path("inference/S15_upgma_min_subtracted/result.txt")),
             "S15",
         )
+        self.assertEqual(
+            _cohort_name(
+                Path(
+                    "S10_CRC11_genetic_schedule_search/schedule_4545/"
+                    "inference.txt"
+                )
+            ),
+            "S10",
+        )
 
     def test_ratio_profile_intervals_are_rendered(self) -> None:
         dataset = "combined_S10_CRC11"
@@ -598,14 +713,29 @@ class SgootrProfileTests(unittest.TestCase):
                 plot_config,
                 plotting={**plot_config.plotting, "formats": ["png"]},
             )
-            outputs = _plot_ratio_profile_intervals(
-                plot_config,
-                {dataset: pd.DataFrame(range_rows)},
-                {dataset: pd.DataFrame(parameter_rows)},
-            )
+            with patch(
+                "src.results.sgootr.profile_combined_inference.plt.close"
+            ) as close_figure:
+                outputs = _plot_ratio_profile_intervals(
+                    plot_config,
+                    {dataset: pd.DataFrame(range_rows)},
+                    {dataset: pd.DataFrame(parameter_rows)},
+                )
+            figure = close_figure.call_args.args[0]
 
             self.assertEqual(len(outputs), 1)
             self.assertTrue(outputs[0].is_file())
+            self.assertTrue(
+                all(
+                    any(
+                        list(line.get_ydata()) == [1.0, 1.0]
+                        and line.get_linestyle() == "--"
+                        for line in axis.lines
+                    )
+                    for axis in figure.axes
+                )
+            )
+            plt.close(figure)
 
     def test_per_tree_ratio_profiles_and_intervals_are_rendered(self) -> None:
         dataset = "combined_S10_CRC04_CRC11_CRC12"
@@ -705,18 +835,26 @@ class SgootrProfileTests(unittest.TestCase):
                 plot_config,
                 plotting={**plot_config.plotting, "formats": ["png"]},
             )
-            sampling_outputs = _plot_ratio_profiles(
-                plot_config,
-                profile_rows,
-                "sampling_ratio",
-                r"\rho",
-            )
-            birth_outputs = _plot_ratio_profiles(
-                plot_config,
-                profile_rows,
-                "birth_ratio",
-                r"\beta",
-            )
+            with patch(
+                "src.results.sgootr.profile_combined_inference.plt.close"
+            ) as close_sampling:
+                sampling_outputs = _plot_ratio_profiles(
+                    plot_config,
+                    profile_rows,
+                    "sampling_ratio",
+                    r"\rho",
+                )
+            sampling_figure = close_sampling.call_args.args[0]
+            with patch(
+                "src.results.sgootr.profile_combined_inference.plt.close"
+            ) as close_birth:
+                birth_outputs = _plot_ratio_profiles(
+                    plot_config,
+                    profile_rows,
+                    "birth_ratio",
+                    r"\beta",
+                )
+            birth_figure = close_birth.call_args.args[0]
             interval_outputs = _plot_ratio_profile_intervals(
                 plot_config,
                 {dataset: pd.DataFrame(range_rows)},
@@ -740,6 +878,19 @@ class SgootrProfileTests(unittest.TestCase):
                 *interval_outputs,
                 *sampling_interval_outputs,
             )))
+            for figure in (sampling_figure, birth_figure):
+                self.assertTrue(
+                    all(
+                        any(
+                            list(line.get_xdata()) == [1.0, 1.0]
+                            and line.get_linestyle() == "--"
+                            for line in axis.lines
+                        )
+                        for axis in figure.axes
+                        if axis.get_visible()
+                    )
+                )
+                plt.close(figure)
 
     def test_profile_ranges_include_inferred_rates_above_configured_ceiling(self) -> None:
         context = DatasetContext(

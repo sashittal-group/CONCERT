@@ -487,7 +487,15 @@ def _plot_panel(
     axis.spines["right"].set_visible(False)
     axis.spines["left"].set_linewidth(1.1)
     axis.spines["bottom"].set_linewidth(1.1)
-    if parameter_type == "transition_ratio":
+    if parameter_type in {"sampling_ratio", "birth_ratio"}:
+        axis.axhline(
+            1.0,
+            color="0.4",
+            linestyle="--",
+            linewidth=1.0,
+            zorder=1,
+        )
+    elif parameter_type == "transition_ratio":
         axis.axhline(
             1.0,
             color="0.4",

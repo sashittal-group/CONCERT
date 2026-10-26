@@ -71,6 +71,12 @@ def parse_args(require_initial_parameters: bool = False):
     )
 
     parser.add_argument(
+        "--preserve-zero-transition-time",
+        action="store_true",
+        help="Treat a leading zero in the transition-time file as a transition.",
+    )
+
+    parser.add_argument(
         "--output",
         type=str,
         required=True,
@@ -619,7 +625,7 @@ def main(
         # ====================================================
 
         transition_times = read_transition_times(args.transition_times_file)
-        if transition_times[0] == 0.0:
+        if transition_times[0] == 0.0 and not args.preserve_zero_transition_time:
             transition_times = transition_times[1:]
 
         print(f"transition_times={transition_times}")

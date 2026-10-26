@@ -55,6 +55,61 @@ for cohort in S10 S15; do
 done
 ```
 
+## CRC11 genetic transition-schedule search
+
+The runner searches schedules of three distinct transition times on the
+0.001-spaced grid `i/1000`, for `i=0..999`. Times at or beyond the CRC11 root
+cannot affect this tree's likelihood, so only grid values strictly before the
+root are sampled (444 values for the current CRC11 tree). It starts with 500
+random schedules, then carries the top 50 into each next cohort and generates
+450 new schedules through tournament parent selection, per-position crossover,
+and 15% per-time mutation. Each schedule gets the existing LBFGS fit, which
+uses up to 20 iterations. The search stops after 10 cohorts at most, or after
+three consecutive cohorts without a global log-likelihood improvement greater
+than `1e-6`.
+
+Run the search with:
+
+```bash
+.venv/bin/python -m src.results.sgootr.schedule_search \
+  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
+  --transition-edges-file data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input/transition_edges.txt \
+  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC11_genetic_schedule_search \
+  --workers 10 --seed 42
+```
+
+Every new schedule rebuilds the CRC11 tree cuts and optimizes the other
+parameters in a separate `main2.py` process; fits within a cohort run in
+parallel. The worker count is capped at the available CPU count. The
+`schedule_search_summary.csv` ranks every unique evaluated schedule and records
+failed fits; `cohort_summary.csv` records generation-level progress, and
+`best_schedule.txt` contains the best successful schedule. Runs are
+reproducible with `--seed`. The options `--cohorts`, `--cohort-size`, and
+`--elite-count` can adjust the corresponding limits. Subsequent cohorts retain
+the best schedules, use tournament-selected crossover, add random schedules
+for 20% of new slots, and mutate individual transition times at a 15% rate.
+Most mutations stay within 0.05 time units of the inherited time; one quarter
+of mutations make a global jump across the eligible grid.
+
+To generate parameter-profile figures for the best genetic-search fit, run:
+
+```bash
+.venv/bin/python -m src.results.sgootr.profile_combined_inference \
+  data/sgootr/all_trees/combined_inference/S10_CRC11_genetic_schedule_search/schedule_4545/inference.txt \
+  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
+  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC11_genetic_schedule_search/schedule_4545/tight_drop_analysis/profiles \
+  --transition-times-only --likelihood-drops 0.1 0.25 0.5 1.0
+```
+
+The profile baseline is checked against the fitted likelihood. Profile tables
+are written to `schedule_4545/tight_drop_analysis/profiles/data/`, and
+parameter/transition and ratio figures to
+`schedule_4545/tight_drop_analysis/profiles/figures/`. The numbered composite
+growth/rate and relative-sampling interval figures are written to
+`schedule_4545/tight_drop_analysis/figures/`. `--likelihood-drops` overrides
+the configured profile thresholds for this run only; the ratio figures mark
+the reference ratio of 1.
+
 For inference run with `src.main2` using only global transition-time epochs,
 add `--transition-times-only` to the profile command. This skips per-edge
 transition assignments and uses the same unconditioned likelihood as `main2`.
