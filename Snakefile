@@ -170,11 +170,18 @@ def tls_composite_tree_files(dataset, filename):
 
 num_batches = 10
 trees_per_batch = 10
+star_trees_per_batch = 128
 seed_stride = 100
 batch_indices = range(num_batches)
 tree_indices = range(trees_per_batch)
+star_tree_indices = range(star_trees_per_batch)
 setting_root = "data/simulation/coord_diff"
 setting_ids = glob_wildcards(f"{setting_root}/setting_{{setting}}/setting.txt").setting
+star_setting_root = f"{setting_root}/star"
+star_setting_ids = glob_wildcards(
+    f"{star_setting_root}/setting_{{setting}}/setting.txt"
+).setting
+star_transition_edges_file = "src/transition_edges_star.txt"
 transition_edges_file = "src/transition_edges.txt"
 transition_times_file = "transition.txt"
 kptracer_root = "data/KPTracer-Data/processed_data"
@@ -907,6 +914,368 @@ rule generate_coord_trees:
             batch=batch_indices,
             tree=tree_indices,
         )
+
+
+rule simulate_star:
+    input:
+        setting_file=f"{star_setting_root}/setting_{{setting}}/setting.txt",
+    output:
+        nodes=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/nodes.csv",
+        edges=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/edges.csv",
+        T_fig=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/T.png",
+        T_extant_fig=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/T_extant.png",
+        transition_times=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/transition_times.csv",
+        transitions_with_edges=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/transition_times_with_edges.csv",
+    params:
+        source_seed=lambda wildcards: (
+            (
+                int(wildcards.setting) * num_batches * trees_per_batch
+                + int(wildcards.batch) * trees_per_batch
+                + int(wildcards.tree)
+            )
+            * seed_stride
+            if int(wildcards.tree) < trees_per_batch
+            else (
+                100_000_000
+                + int(wildcards.setting)
+                * num_batches
+                * star_trees_per_batch
+                * seed_stride
+                + (
+                    int(wildcards.batch) * star_trees_per_batch
+                    + int(wildcards.tree)
+                )
+                * seed_stride
+            )
+        ),
+        output_dir=lambda wildcards: (
+            f"{star_setting_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{wildcards.tree}"
+        ),
+        python=sys.executable,
+    log:
+        std=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/stdout.log",
+        err=f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/stderr.log",
+    benchmark:
+        f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/benchmark.txt",
+    shell:
+        "{params.python:q} -m src.simulator_coord {input.setting_file:q} "
+        "{params.source_seed} {params.output_dir:q} "
+        "> {log.std:q} 2> {log.err:q}"
+
+
+rule simulate_star_trees:
+    input:
+        expand(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/edges.csv",
+            setting=star_setting_ids,
+            batch=batch_indices,
+            tree=star_tree_indices,
+        )
+
+
+rule extract_star_transition_times:
+    input:
+        setting_file=f"{star_setting_root}/setting_{{setting}}/setting.txt",
+        code=["src/extract_star_transition_times.py", "src/simulator_coord.py"],
+    output:
+        f"{star_setting_root}/setting_{{setting}}/transition-times.txt",
+    params:
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.extract_star_transition_times "
+        "{input.setting_file:q} {output:q}"
+
+
+rule infer_star_first4_all:
+    input:
+        expand(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_4_trees.out",
+            setting=star_setting_ids,
+            batch=batch_indices,
+        )
+
+
+rule infer_star_first4:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/nodes.csv",
+            tree=range(4),
+        ),
+        edges=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/edges.csv",
+            tree=range(4),
+        ),
+        transition_edges=star_transition_edges_file,
+        transition_times=(
+            f"{star_setting_root}/setting_{{setting}}/transition-times.txt"
+        ),
+    output:
+        out=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_4_trees.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}"
+        ),
+        num_trees=4,
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_4_trees.log"
+        ),
+        stdout=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_4_trees.stdout.log"
+        ),
+        stderr=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_4_trees.stderr.log"
+        ),
+    benchmark:
+        f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/inference_first_4_trees.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.main2 {params.tree_directory:q} "
+        "--num-states 4 --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_star_first8_all:
+    input:
+        expand(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_8_trees.out",
+            setting=star_setting_ids,
+            batch=batch_indices,
+        )
+
+
+rule infer_star_first8:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/nodes.csv",
+            tree=range(8),
+        ),
+        edges=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/edges.csv",
+            tree=range(8),
+        ),
+        transition_edges=star_transition_edges_file,
+        transition_times=(
+            f"{star_setting_root}/setting_{{setting}}/transition-times.txt"
+        ),
+    output:
+        out=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_8_trees.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}"
+        ),
+        num_trees=8,
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_8_trees.log"
+        ),
+        stdout=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_8_trees.stdout.log"
+        ),
+        stderr=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_first_8_trees.stderr.log"
+        ),
+    benchmark:
+        f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/inference_first_8_trees.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.main2 {params.tree_directory:q} "
+        "--num-states 4 --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_star_first4_joint_times_all:
+    input:
+        expand(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_4_trees.out",
+            setting=star_setting_ids,
+            batch=batch_indices,
+        )
+
+
+rule infer_star_first4_joint_times:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/nodes.csv",
+            tree=range(4),
+        ),
+        edges=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/edges.csv",
+            tree=range(4),
+        ),
+        transition_edges=star_transition_edges_file,
+        code=[
+            "src/main2_joint_transition_times.py",
+            "src/main2.py",
+            "src/dataprocessor.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dtos.py",
+        ],
+    output:
+        out=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_4_trees.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}"
+        ),
+        random_seed=lambda wildcards: (
+            int(wildcards.setting.split("_")[-1]) * 1000 + int(wildcards.batch)
+        ),
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_4_trees.log"
+        ),
+        stdout=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_4_trees.stdout.log"
+        ),
+        stderr=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_4_trees.stderr.log"
+        ),
+    benchmark:
+        f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/inference_joint_times_first_4_trees.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.main2_joint_transition_times "
+        "{params.tree_directory:q} --num-states 4 --num-trees 4 "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--num-transition-times 5 --max-time 1 --search-rounds 3 "
+        "--random-seed {params.random_seed} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_star_first8_joint_times_all:
+    input:
+        expand(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_8_trees.out",
+            setting=star_setting_ids,
+            batch=batch_indices,
+        )
+
+
+rule infer_star_first8_joint_times:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/nodes.csv",
+            tree=range(8),
+        ),
+        edges=lambda wildcards: expand(
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            "tree_{tree}/edges.csv",
+            tree=range(8),
+        ),
+        transition_edges=star_transition_edges_file,
+        code=[
+            "src/main2_joint_transition_times.py",
+            "src/main2.py",
+            "src/dataprocessor.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dtos.py",
+        ],
+    output:
+        out=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_8_trees.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{star_setting_root}/setting_{wildcards.setting}/batch_{wildcards.batch}"
+        ),
+        random_seed=lambda wildcards: (
+            int(wildcards.setting.split("_")[-1]) * 1000 + int(wildcards.batch)
+        ),
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_8_trees.log"
+        ),
+        stdout=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_8_trees.stdout.log"
+        ),
+        stderr=(
+            f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_times_first_8_trees.stderr.log"
+        ),
+    benchmark:
+        f"{star_setting_root}/setting_{{setting}}/batch_{{batch}}/inference_joint_times_first_8_trees.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.main2_joint_transition_times "
+        "{params.tree_directory:q} --num-states 4 --num-trees 8 "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--num-transition-times 5 --max-time 1 --search-rounds 3 "
+        "--random-seed {params.random_seed} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
 
 
 rule infer_batch:
