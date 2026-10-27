@@ -36,6 +36,31 @@ python -m src.results.tls.compare_transition_profiles \
 The comparison PNGs are written to
 `data/troupe/TLS/fixed_sampling_0.1/profiles/figures/`.
 
+## TLS/TLSC figure panels
+
+Generate the current transition diagram (Panel B), separate TLS and TLSC
+condition subpanels, and the composite figure with the other panel slots left
+blank:
+
+```bash
+python -m src.results.tls.figure_generator
+```
+
+The pipeline reads each condition's 100-transition fit, uses the median
+spacing of `data/troupe/transition-times-100.txt` to calculate the effective
+transition rates `p/Δt`, and generates PNG, PDF, and SVG versions of each
+condition subpanel, Panel B, and the composite. Outputs are written to
+`data/troupe/figures/figure_generator/`. The TLS result is marked as a
+checkpoint if its final `.out` file is absent. The composite reserves a blank
+Panel A slot for a future subpanel. The panels use Arial, abbreviate the
+terminal states as NT and S, label nodes with `β_s − δ_s` and `β_s ρ`, and show
+the fitted values for both node quantities. They show `p_{NMP,target} / Δt` on
+differentiation edges plus `p_{NMP,NMP} / Δt` on the progenitor self-loop.
+Node area increases with net growth (with a minimum size retained for text
+legibility), and edge width and arrowhead size increase with the displayed
+rate on a logarithmic scale so that both the self-loop and differentiation
+edges remain visible. Parameter values are printed inline with their formulas.
+
 ## State likelihoods for cut edge segments
 
 To compute and store the likelihood and posterior probability of each state for

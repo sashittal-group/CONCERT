@@ -28,6 +28,17 @@ class ScheduleSearchTests(unittest.TestCase):
         self.assertEqual(indices[-1], 443)
         self.assertTrue(all(index / 1000 < 0.443103042059838 for index in indices))
 
+    def test_grid_can_exclude_zero_time(self) -> None:
+        indices = candidate_grid_indices(
+            0.443103042059838,
+            exclude_zero_time=True,
+        )
+
+        self.assertEqual(len(indices), 443)
+        self.assertEqual(indices[0], 1)
+        self.assertEqual(indices[-1], 443)
+        self.assertTrue(all(index / 1000 > 0.0 for index in indices))
+
     def test_rejects_nonpositive_root_time(self) -> None:
         with self.assertRaisesRegex(ValueError, "Root time"):
             candidate_grid_indices(0.0)

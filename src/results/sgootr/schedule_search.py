@@ -172,12 +172,16 @@ def genetic_schedules(
     return schedules
 
 
-def candidate_grid_indices(root_time: float) -> list[int]:
+def candidate_grid_indices(
+    root_time: float,
+    *,
+    exclude_zero_time: bool = False,
+) -> list[int]:
     if not math.isfinite(root_time) or root_time <= 0.0:
         raise ValueError("Root time must be finite and positive.")
     return [
         index
-        for index in range(GRID_SIZE)
+        for index in range(1 if exclude_zero_time else 0, GRID_SIZE)
         if index / GRID_SIZE < root_time
     ]
 
@@ -385,6 +389,7 @@ def run_schedule_search(
     cohort_size: int = DEFAULT_COHORT_SIZE,
     elite_count: int = DEFAULT_ELITE_COUNT,
     seed: int = 42,
+    exclude_zero_time: bool = False,
 ) -> list[ScheduleResult]:
     if workers < 1:
         raise ValueError("workers must be at least one.")
@@ -424,7 +429,10 @@ def run_schedule_search(
             load_edges(str(edge_path)),
         )
     root_time = float(tree.nodes[tree.graph["root"]]["T"])
-    candidate_indices = candidate_grid_indices(root_time)
+    candidate_indices = candidate_grid_indices(
+        root_time,
+        exclude_zero_time=exclude_zero_time,
+    )
     if len(candidate_indices) < SCHEDULE_SIZE:
         raise ValueError(
             f"Only {len(candidate_indices)} grid times precede the root; "
@@ -447,8 +455,9 @@ def run_schedule_search(
     stagnant_cohorts = 0
     available_cpus = os.cpu_count() or 1
     effective_workers = min(workers, available_cpus, cohort_size)
+    first_grid_index = 1 if exclude_zero_time else 0
     print(
-        f"Grid: i/{GRID_SIZE} for i=0..{GRID_SIZE - 1}; "
+        f"Grid: i/{GRID_SIZE} for i={first_grid_index}..{GRID_SIZE - 1}; "
         f"{len(candidate_indices)} times precede root time {root_time:.15g}. "
         f"Evaluating cohorts of {cohort_size}, retaining {elite_count} elites, "
         f"up to {cohorts} cohorts with {effective_workers} workers."
@@ -616,6 +625,11 @@ def main() -> None:
     parser.add_argument("--cohort-size", type=int, default=DEFAULT_COHORT_SIZE)
     parser.add_argument("--elite-count", type=int, default=DEFAULT_ELITE_COUNT)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--exclude-zero-time",
+        action="store_true",
+        help="Exclude the zero-time grid point; the smallest candidate is 0.001.",
+    )
     args = parser.parse_args()
 
     run_schedule_search(
@@ -627,6 +641,7 @@ def main() -> None:
         cohort_size=args.cohort_size,
         elite_count=args.elite_count,
         seed=args.seed,
+        exclude_zero_time=args.exclude_zero_time,
     )
 
 

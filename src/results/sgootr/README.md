@@ -78,6 +78,10 @@ Run the search with:
   --workers 10 --seed 42
 ```
 
+To rule out a transition exactly at the sampling time, add
+`--exclude-zero-time`; the smallest eligible transition time is then 0.001.
+Use a separate output directory for this constrained run.
+
 Every new schedule rebuilds the CRC11 tree cuts and optimizes the other
 parameters in a separate `main2.py` process; fits within a cohort run in
 parallel. The worker count is capped at the available CPU count. The
