@@ -5,6 +5,7 @@ import csv
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import shutil
 
 import matplotlib
 
@@ -16,14 +17,11 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
 from matplotlib.path import Path as MatplotlibPath
-import numpy as np
 import pandas as pd
 
 from src.results.sgootr.plot_state_specific_transitions import _read_result
 from src.results.tls.plot_state_coloring import _draw_subtree
-from src.results.tls.figure_generator.style import (
-    FONT_FAMILY,
-)
+from src.results.tls.figure_generator.style import FONT_FAMILY
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -39,14 +37,6 @@ DEFAULT_FIT = (
 DEFAULT_FIGURES_DIR = DEFAULT_FIT.parent / "figures"
 DEFAULT_TREE_SEGMENTS = DEFAULT_FIGURES_DIR / "CRC11_state_segments.csv"
 DEFAULT_PROFILES_DIR = DEFAULT_FIT.parent / "profiles" / "data"
-DEFAULT_INPUT_DIR = COMBINED_INFERENCE_DIR / "S10_CRC11_transition_chain_input"
-DEFAULT_TRANSITION_PROFILE = (
-    COMBINED_INFERENCE_DIR
-    / "S10_CRC11_ptln_transition_count_analysis"
-    / "ptln_2"
-    / "fixed_parameter_time_profile"
-    / "fixed_parameter_transition_time_profile.csv"
-)
 DEFAULT_COUNT_LIKELIHOOD = (
     COMBINED_INFERENCE_DIR
     / "S10_CRC11_ptln_transition_count_analysis"
@@ -65,7 +55,9 @@ GROWTH_PARAMETERS = tuple(f"growth[{state}]" for state in STATE_NAMES)
 RELATIVE_BIRTH_PARAMETERS = ("birth_ratio[PT/NC]", "birth_ratio[LN/NC]")
 PROFILE_BOX_LIKELIHOOD_FRACTION = math.exp(-0.25)
 PROFILE_WHISKER_LIKELIHOOD_FRACTION = math.exp(-1.0)
-FIGURE_FONT_SIZE = 8
+FIGURE_FONT_SIZE = 16
+PANEL_LABEL_SIZE = 18
+PROFILE_XTICK_FONT_SIZE = 18
 
 matplotlib.rcParams.update(
     {
@@ -201,11 +193,11 @@ def _read_parameter_profiles(
             )
 
     labels = {
-        "growth[NC]": r"$\gamma_{\mathrm{NC}}$",
-        "growth[PT]": r"$\gamma_{\mathrm{PT}}$",
-        "growth[LN]": r"$\gamma_{\mathrm{LN}}$",
-        "birth_ratio[PT/NC]": r"$\beta_{\mathrm{PT}}/\beta_{\mathrm{NC}}$",
-        "birth_ratio[LN/NC]": r"$\beta_{\mathrm{LN}}/\beta_{\mathrm{NC}}$",
+        "growth[NC]": "NC",
+        "growth[PT]": "PT",
+        "growth[LN]": "LN",
+        "birth_ratio[PT/NC]": r"$\beta_{\mathrm{PT}} / \beta_{\mathrm{NC}}$",
+        "birth_ratio[LN/NC]": r"$\beta_{\mathrm{LN}} / \beta_{\mathrm{NC}}$",
     }
     parameter_types = {
         **dict.fromkeys(GROWTH_PARAMETERS, "growth"),
@@ -278,7 +270,7 @@ def draw_panel_a(axis: Axes) -> None:
     axis.set_aspect("equal")
     axis.axis("off")
 
-    positions = {"NC": (0.16, 0.43), "PT": (0.50, 0.43), "LN": (0.84, 0.43)}
+    positions = {"NC": (0.09, 0.43), "PT": (0.50, 0.43), "LN": (0.91, 0.43)}
     radius = 0.105
     for source_name, target_name in (("NC", "PT"), ("PT", "LN")):
         start_x = positions[source_name][0] + radius
@@ -366,6 +358,8 @@ def _draw_interval_profile(
     *,
     ylabel: str,
 ) -> None:
+    box_width = 0.15 * len(intervals)
+    cap_half_width = box_width * 0.22
     for index, interval in enumerate(intervals):
         x = float(index)
         color = colors_by_parameter.get(interval.parameter, "#6f91bd")
@@ -379,28 +373,28 @@ def _draw_interval_profile(
         )
         axis.hlines(
             (interval.whisker_lower, interval.whisker_upper),
-            x - 0.10,
-            x + 0.10,
-            color="#333333",
+            x - cap_half_width,
+            x + cap_half_width,
+            color="#3F3F3F",
             linewidth=1.0,
             zorder=1,
         )
         axis.add_patch(
             Rectangle(
-                (x - 0.23, interval.box_lower),
-                0.46,
+                (x - box_width / 2, interval.box_lower),
+                box_width,
                 interval.box_upper - interval.box_lower,
                 facecolor=color,
-                edgecolor="#333333",
+                edgecolor="#3F3F3F",
                 linewidth=0.8,
-                alpha=0.55,
+                alpha=0.62,
                 zorder=2,
             )
         )
         axis.hlines(
             interval.estimate,
-            x - 0.23,
-            x + 0.23,
+            x - box_width / 2,
+            x + box_width / 2,
             color="#222222",
             linewidth=1.7,
             zorder=3,
@@ -408,39 +402,28 @@ def _draw_interval_profile(
     axis.set_xticks(
         range(len(intervals)),
         labels=[interval.label for interval in intervals],
-        rotation=35,
-        ha="right",
-        rotation_mode="anchor",
+        rotation=0,
+        ha="center",
     )
+    axis.set_xlim(-0.5, len(intervals) - 0.5)
     axis.set_ylabel(ylabel, fontsize=FIGURE_FONT_SIZE)
-    axis.tick_params(labelsize=FIGURE_FONT_SIZE, length=3)
-    axis.grid(axis="y", linestyle=":", alpha=0.45)
+    axis.tick_params(axis="y", labelsize=FIGURE_FONT_SIZE, length=2, pad=2)
+    axis.tick_params(
+        axis="x",
+        labelsize=PROFILE_XTICK_FONT_SIZE,
+        length=2,
+        pad=3,
+    )
+    axis.set_axisbelow(True)
+    axis.grid(axis="y", color="#E5E7EB", linewidth=0.55)
     axis.spines["top"].set_visible(False)
     axis.spines["right"].set_visible(False)
 
 
-def _transition_probability_matrix(
-    fit: FigureFit,
-    edge: tuple[int, int],
-) -> np.ndarray:
-    matrices = [
-        np.asarray(matrix, dtype=float)
-        for epoch_edge, matrix in zip(fit.epoch_edges, fit.transition_matrices)
-        if epoch_edge == edge
-    ]
-    if not matrices:
-        raise ValueError(f"The fitted result does not contain transition edge {edge}.")
-    if any(not np.allclose(matrix, matrices[0], rtol=0.0, atol=1e-10) for matrix in matrices[1:]):
-        raise ValueError(f"Repeated epochs for {edge} do not share a transition matrix.")
-    return matrices[0]
-
-
-def draw_panel_b(
+def draw_panel_d(
     growth_axis: Axes,
-    matrix_axes: tuple[Axes, Axes],
     birth_axis: Axes,
     profiles: dict[str, list[ProfileInterval]],
-    fit: FigureFit,
 ) -> None:
     growth_axis.set_title(
         "Net growth rate",
@@ -453,48 +436,6 @@ def draw_panel_b(
         {f"growth[{state}]": STATE_COLORS[state] for state in STATE_NAMES},
         ylabel=r"$\beta_s-\delta_s$",
     )
-
-    matrix_edges = ((0, 1), (1, 2))
-    matrix_titles = ("NC→PT epoch", "PT→LN epochs (shared matrix)")
-    for axis, edge, title in zip(matrix_axes, matrix_edges, matrix_titles):
-        axis.set_title(title, fontsize=FIGURE_FONT_SIZE, pad=5)
-        matrix = _transition_probability_matrix(fit, edge)
-        axis.imshow(
-            np.ma.masked_equal(matrix, 0.0),
-            cmap="Blues",
-            vmin=0.0,
-            vmax=1.0,
-            aspect="equal",
-        )
-        for row in range(len(STATE_NAMES)):
-            for column in range(len(STATE_NAMES)):
-                probability = matrix[row, column]
-                axis.text(
-                    column,
-                    row,
-                    f"{probability:.3f}" if probability else "0",
-                    ha="center",
-                    va="center",
-                    fontsize=FIGURE_FONT_SIZE,
-                    color="white" if probability >= 0.5 else "#222222",
-                )
-        axis.set_xticks(range(len(STATE_NAMES)), labels=STATE_NAMES)
-        axis.set_yticks(range(len(STATE_NAMES)), labels=STATE_NAMES)
-        axis.set_xlabel(
-            "Destination",
-            fontsize=FIGURE_FONT_SIZE,
-            labelpad=2,
-        )
-        axis.tick_params(labelsize=FIGURE_FONT_SIZE, length=0)
-        axis.set_aspect("equal", adjustable="box")
-    matrix_axes[0].set_ylabel(
-        "Source",
-        fontsize=FIGURE_FONT_SIZE,
-        labelpad=3,
-    )
-    matrix_axes[1].set_ylabel("")
-    matrix_axes[1].tick_params(labelleft=False)
-
     birth_axis.set_title(
         "Relative birth rates",
         fontsize=FIGURE_FONT_SIZE,
@@ -512,13 +453,13 @@ def draw_panel_b(
     birth_axis.axhline(1.0, color="#555555", linestyle="--", linewidth=0.8)
 
 
+def draw_panel_b(axis: Axes, count_likelihood_path: Path, fit: FigureFit) -> None:
+    _draw_transition_count_likelihood(axis, count_likelihood_path, fit)
+
+
 def draw_panel_c(
     tree_axis: Axes,
-    likelihood_axis: Axes,
-    count_axis: Axes,
     tree_segments_path: Path,
-    transition_profile_path: Path,
-    count_likelihood_path: Path,
     fit: FigureFit,
 ) -> float:
     if not tree_segments_path.is_file():
@@ -538,157 +479,45 @@ def draw_panel_c(
     if not math.isfinite(root_time) or root_time <= 0.0:
         raise ValueError(f"Invalid tree time range in {tree_segments_path}.")
 
-    if not transition_profile_path.is_file():
-        raise FileNotFoundError(
-            f"Transition-time likelihood profile not found: {transition_profile_path}"
+    markers = tuple(
+        (
+            root_time - fitted_time,
+            color,
         )
-    with transition_profile_path.open(newline="", encoding="utf-8") as source:
-        rows = list(csv.DictReader(source))
-    if not rows:
-        raise ValueError(f"No transition-time profile points in {transition_profile_path}")
-    for epoch_index, fitted_time in enumerate(fit.transition_times):
-        baseline_rows = [
-            row for row in rows
-            if int(row["epoch_index"]) == epoch_index
-            and math.isclose(
-                float(row["varied_time"]),
-                fitted_time,
-                rel_tol=0.0,
-                abs_tol=1e-10,
-            )
-        ]
-        if len(baseline_rows) != 1 or not math.isclose(
-            float(baseline_rows[0]["log_likelihood"]),
-            fit.log_likelihood,
-            rel_tol=0.0,
-            abs_tol=1e-5,
-        ):
-            raise ValueError(
-                "Transition-time profile does not match the selected fit at "
-                f"epoch {epoch_index}."
-            )
-
-    styles = tuple(
-        (fit.epoch_edges[index], index, color)
-        for index, color in enumerate(("#dd8452", "#c44e52", "#4c72b0"))
+        for fitted_time, color in zip(
+            fit.transition_times,
+            ("#dd8452", "#c44e52", "#4c72b0"),
+        )
     )
-    finite_deltas = []
-    series = []
-    markers = []
-    for edge, occurrence, color in styles:
-        edge_label = f"{STATE_NAMES[edge[0]]}->{STATE_NAMES[edge[1]]}"
-        label = (
-            f"{edge_label.replace('->', '→')} "
-            f"({fit.transition_times[occurrence]:.3f})"
-        )
-        markers.append((root_time - fit.transition_times[occurrence], color))
-        edge_rows = [
-            row for row in rows
-            if row["transition_edge"] == edge_label
-            and int(row["epoch_index"]) == occurrence
-        ]
-        if not edge_rows:
-            raise ValueError(f"Missing transition-time profile for {label}.")
-        points = [
-            (float(row["varied_time"]), float(row["log_likelihood"]))
-            for row in edge_rows
-        ]
-        deltas = [
-            likelihood - fit.log_likelihood
-            for _, likelihood in points
-        ]
-        finite_deltas.extend(value for value in deltas if math.isfinite(value))
-        series.append((points, deltas, color, label, fit.transition_times[occurrence]))
-
-    if not finite_deltas:
-        raise FloatingPointError("No finite transition-time profile likelihoods.")
     drawn_root_time = _draw_subtree(
         tree_axis,
         tree_segments,
-        "CRC11 S10",
+        "CRC11",
         "CRC11",
         STATE_NAMES,
-        tuple(markers),
+        markers,
         STATE_COLORS,
-        "CRC11 S10 colored tree",
+        "CRC11 tree",
         FIGURE_FONT_SIZE,
     )
     if not math.isclose(drawn_root_time, root_time, rel_tol=0.0, abs_tol=1e-10):
         raise ValueError("Tree-segment time range changed while drawing.")
-    tree_axis.set_ylabel("Time from root", fontsize=FIGURE_FONT_SIZE)
-    likelihood_axis.sharey(tree_axis)
-    likelihood_axis.set_ylim(-root_time, 0.0)
-    likelihood_floor = min(-5.0, min(finite_deltas) - 2.0)
-    for points, deltas, color, label, baseline_time in series:
-        time_values = np.asarray([time for time, _ in points], dtype=float)
-        likelihood_values = np.asarray(
-            [value if math.isfinite(value) else np.nan for value in deltas],
-            dtype=float,
-        )
-        mirrored_times = root_time - time_values
-        tree_aligned_times = -mirrored_times
-        likelihood_axis.plot(
-            likelihood_values,
-            tree_aligned_times,
-            color=color,
-            linewidth=1.2,
-            label=label,
-            zorder=3,
-        )
-        fill_order = np.argsort(tree_aligned_times)
-        likelihood_axis.fill_betweenx(
-            tree_aligned_times[fill_order],
-            likelihood_floor,
-            likelihood_values[fill_order],
-            color=color,
-            alpha=0.16,
-            linewidth=0,
-            zorder=2,
-        )
-        zero_likelihood_points = [
-            time for (time, _), delta in zip(points, deltas)
-            if delta == -math.inf
-        ]
-        if zero_likelihood_points:
-            likelihood_axis.scatter(
-                [likelihood_floor] * len(zero_likelihood_points),
-                [-time for time in zero_likelihood_points],
-                marker="v",
-                color=color,
-                s=FIGURE_FONT_SIZE * 2,
-                zorder=3,
-            )
-        likelihood_axis.axhline(
-            -(root_time - baseline_time),
-            color=color,
-            linewidth=0.8,
-            linestyle="--",
-            alpha=0.8,
-        )
-    likelihood_axis.axvline(0.0, color="#555555", linewidth=0.8)
-    likelihood_axis.set_xlim(likelihood_floor, 1.0)
-    likelihood_axis.set_xlabel(
-        r"$\Delta$ log-likelihood",
-        fontsize=FIGURE_FONT_SIZE,
+    for line in tree_axis.lines:
+        if line.get_linestyle() != "--":
+            line.set_alpha(0.8)
+    for collection in tree_axis.collections:
+        collection.set_alpha(0.55)
+    tree_ticks = [root_time * index / 4 for index in range(5)]
+    tree_axis.set_yticks(
+        [-value for value in tree_ticks],
+        labels=[f"{value:.2f}" for value in tree_ticks],
     )
-    likelihood_axis.set_ylabel("")
-    likelihood_axis.set_title(
-        "Likelihood by transition time",
-        loc="left",
-        fontsize=FIGURE_FONT_SIZE,
-        pad=4,
-    )
-    likelihood_axis.tick_params(
-        labelsize=FIGURE_FONT_SIZE,
-        labelleft=False,
-    )
-    likelihood_axis.grid(True, axis="x", linestyle=":", alpha=0.4)
-    likelihood_axis.legend(
-        frameon=False,
-        fontsize=FIGURE_FONT_SIZE,
-        loc="lower right",
-    )
-    _draw_transition_count_likelihood(count_axis, count_likelihood_path, fit)
+    tree_axis.set_ylabel("Time", fontsize=FIGURE_FONT_SIZE)
+    tree_axis.tick_params(axis="y", labelsize=FIGURE_FONT_SIZE)
+    tree_legend = tree_axis.get_legend()
+    if tree_legend is None:
+        raise RuntimeError("The CRC11 tree state color map was not created.")
+    tree_legend.set_title("")
     return root_time
 
 
@@ -749,13 +578,16 @@ def _draw_transition_count_likelihood(
         zorder=4,
     )
     axis.set_xticks(counts_ordered)
-    axis.set_xlabel("PT→LN count", fontsize=FIGURE_FONT_SIZE)
+    axis.set_xlabel(
+        "Number of PT→LN transition times",
+        fontsize=FIGURE_FONT_SIZE,
+    )
     axis.set_ylabel(
-        r"$\Delta$ LL (vs 2)",
+        r"$\Delta$ log-likelihood (vs. 2)",
         fontsize=FIGURE_FONT_SIZE,
     )
     axis.set_title(
-        "PT→LN count",
+        "Log-likelihood change",
         fontsize=FIGURE_FONT_SIZE,
         pad=4,
     )
@@ -783,6 +615,35 @@ def _save_figure(figure: Figure, basename: Path) -> dict[str, Path]:
         figure.savefig(output_path, dpi=300, bbox_inches="tight")
         outputs[file_format] = output_path
     return outputs
+
+
+def _preserve_old_panel_outputs(output_dir: Path) -> None:
+    for basename in ("panel_A", "panel_B", "panel_C", "figure_composite"):
+        for file_format in FORMATS:
+            current_path = output_dir / f"{basename}.{file_format}"
+            old_path = output_dir / f"{basename}_old.{file_format}"
+            if current_path.is_file() and not old_path.exists():
+                shutil.copy2(current_path, old_path)
+
+
+def _add_panel_label(
+    figure: Figure,
+    axis: Axes,
+    letter: str,
+    *,
+    x_offset: float = -0.025,
+    y_offset: float = 0.012,
+) -> None:
+    position = axis.get_position()
+    figure.text(
+        max(0.005, position.x0 + x_offset),
+        position.y1 + y_offset,
+        letter,
+        fontsize=PANEL_LABEL_SIZE,
+        fontweight="bold",
+        va="top",
+        ha="left",
+    )
 
 
 def _write_profile_data(
@@ -832,190 +693,109 @@ def generate_figures(
     inference_path: Path = DEFAULT_FIT,
     profiles_dir: Path = DEFAULT_PROFILES_DIR,
     tree_segments: Path = DEFAULT_TREE_SEGMENTS,
-    input_dir: Path = DEFAULT_INPUT_DIR,
-    transition_profile_path: Path = DEFAULT_TRANSITION_PROFILE,
     count_likelihood_path: Path = DEFAULT_COUNT_LIKELIHOOD,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
 ) -> dict[str, dict[str, Path]]:
     inference_path = inference_path.resolve()
     profiles_dir = profiles_dir.resolve()
     tree_segments = tree_segments.resolve()
-    input_dir = input_dir.resolve()
-    transition_profile_path = transition_profile_path.resolve()
     count_likelihood_path = count_likelihood_path.resolve()
     output_dir = output_dir.resolve()
     if not inference_path.is_file():
         raise FileNotFoundError(f"CRC11 inference fit not found: {inference_path}")
     fit = load_fit(inference_path)
     profiles = _read_parameter_profiles(fit, profiles_dir)
-    if not input_dir.is_dir():
-        raise NotADirectoryError(f"CRC11 tree input directory not found: {input_dir}")
-    if not transition_profile_path.is_file():
+    if not tree_segments.is_file():
+        raise FileNotFoundError(f"Colored CRC11 tree segments not found: {tree_segments}")
+    if not count_likelihood_path.is_file():
         raise FileNotFoundError(
-            f"Transition-time likelihood profile not found: {transition_profile_path}"
+            f"Transition-count likelihood data not found: {count_likelihood_path}"
         )
     output_dir.mkdir(parents=True, exist_ok=True)
+    _preserve_old_panel_outputs(output_dir)
 
     outputs: dict[str, dict[str, Path]] = {}
-    figure, axis = plt.subplots(figsize=(6.3, 4.2))
+    figure, axis = plt.subplots(figsize=(5.0, 4.6))
     draw_panel_a(axis)
-    figure.subplots_adjust(left=0.08, right=0.98, top=0.90, bottom=0.06)
-    figure.text(
-        0.01,
-        0.99,
-        "A",
-        fontsize=FIGURE_FONT_SIZE,
-        fontweight="bold",
-        va="top",
-    )
+    figure.subplots_adjust(left=0.06, right=0.98, top=0.88, bottom=0.08)
+    _add_panel_label(figure, axis, "A")
     outputs["panel_A"] = _save_figure(figure, output_dir / "panel_A")
     plt.close(figure)
 
-    figure = plt.figure(figsize=(15.5, 5.6))
-    panel_b_grid = figure.add_gridspec(
-        1,
-        3,
-        width_ratios=(1.15, 0.9, 1.15),
-        left=0.06,
-        right=0.98,
-        top=0.88,
-        bottom=0.12,
-        wspace=0.22,
-    )
-    panel_b_growth_axis = figure.add_subplot(panel_b_grid[0, 0])
-    panel_b_matrix_grid = panel_b_grid[0, 1].subgridspec(2, 1, hspace=0.30)
-    panel_b_matrix_axes = tuple(
-        figure.add_subplot(panel_b_matrix_grid[index, 0]) for index in range(2)
-    )
-    panel_b_birth_axis = figure.add_subplot(panel_b_grid[0, 2])
-    draw_panel_b(
-        panel_b_growth_axis,
-        panel_b_matrix_axes,
-        panel_b_birth_axis,
-        profiles,
-        fit,
-    )
-    figure.text(
-        0.01,
-        0.99,
-        "B",
-        fontsize=FIGURE_FONT_SIZE,
-        fontweight="bold",
-        va="top",
-    )
+    figure, axis = plt.subplots(figsize=(6.8, 3.8))
+    draw_panel_b(axis, count_likelihood_path, fit)
+    figure.subplots_adjust(left=0.18, right=0.98, top=0.84, bottom=0.24)
+    _add_panel_label(figure, axis, "B")
     outputs["panel_B"] = _save_figure(figure, output_dir / "panel_B")
     plt.close(figure)
 
-    figure = plt.figure(figsize=(14.5, 5.2))
-    panel_c_grid = figure.add_gridspec(
-        1,
-        3,
-        width_ratios=(1.65, 0.36, 0.75),
-        left=0.06,
-        right=0.98,
-        top=0.90,
-        bottom=0.13,
-        wspace=0.18,
-    )
-    tree_axis = figure.add_subplot(panel_c_grid[0, 0])
-    likelihood_axis = figure.add_subplot(panel_c_grid[0, 1])
-    count_axis = figure.add_subplot(panel_c_grid[0, 2])
-    draw_panel_c(
+    figure, tree_axis = plt.subplots(figsize=(11.5, 3.8))
+    draw_panel_c(tree_axis, tree_segments, fit)
+    figure.subplots_adjust(left=0.07, right=0.99, top=0.78, bottom=0.12)
+    _add_panel_label(
+        figure,
         tree_axis,
-        likelihood_axis,
-        count_axis,
-        tree_segments,
-        transition_profile_path,
-        count_likelihood_path,
-        fit,
-    )
-    figure.text(
-        0.01,
-        0.99,
         "C",
-        fontsize=FIGURE_FONT_SIZE,
-        fontweight="bold",
-        va="top",
+        x_offset=-0.065,
+        y_offset=0.075,
     )
     outputs["panel_C"] = _save_figure(figure, output_dir / "panel_C")
     plt.close(figure)
 
-    figure = plt.figure(figsize=(16.0, 11.0))
+    figure, axes = plt.subplots(1, 2, figsize=(12.5, 4.2))
+    panel_d_axes = tuple(axes)
+    draw_panel_d(panel_d_axes[0], panel_d_axes[1], profiles)
+    figure.subplots_adjust(left=0.10, right=0.98, top=0.87, bottom=0.19, wspace=0.42)
+    _add_panel_label(figure, panel_d_axes[0], "D")
+    outputs["panel_D"] = _save_figure(figure, output_dir / "panel_D")
+    plt.close(figure)
+
+    figure = plt.figure(figsize=(18.5, 6.2))
     grid = figure.add_gridspec(
+        1,
+        3,
+        width_ratios=(1.05, 1.75, 1.55),
+        left=0.045,
+        right=0.99,
+        top=0.92,
+        bottom=0.12,
+        wspace=0.28,
+    )
+    left_grid = grid[0, 0].subgridspec(
         2,
         1,
         height_ratios=(1.15, 0.85),
-        left=0.04,
-        right=0.985,
-        top=0.95,
-        bottom=0.08,
-        hspace=0.20,
+        hspace=0.25,
     )
-    top_grid = grid[0, 0].subgridspec(
-        1,
-        2,
-        width_ratios=(0.72, 2.40),
-        wspace=0.10,
-    )
-    panel_a_axis = figure.add_subplot(top_grid[0, 0])
-    panel_c_grid = top_grid[0, 1].subgridspec(
-        1,
-        3,
-        width_ratios=(1.65, 0.36, 0.75),
-        wspace=0.10,
-    )
-    panel_c_tree_axis = figure.add_subplot(panel_c_grid[0, 0])
-    panel_c_likelihood_axis = figure.add_subplot(panel_c_grid[0, 1])
-    panel_c_count_axis = figure.add_subplot(panel_c_grid[0, 2])
-    panel_b_grid = grid[1, 0].subgridspec(
-        1,
-        3,
-        width_ratios=(1.15, 0.9, 1.15),
-        wspace=0.22,
-    )
-    panel_b_growth_axis = figure.add_subplot(panel_b_grid[0, 0])
-    panel_b_matrix_grid = panel_b_grid[0, 1].subgridspec(2, 1, hspace=0.28)
-    panel_b_matrix_axes = tuple(
-        figure.add_subplot(panel_b_matrix_grid[index, 0]) for index in range(2)
-    )
-    panel_b_birth_axis = figure.add_subplot(panel_b_grid[0, 2])
+    panel_a_axis = figure.add_subplot(left_grid[0, 0])
+    panel_b_axis = figure.add_subplot(left_grid[1, 0])
+    panel_c_axis = figure.add_subplot(grid[0, 1])
+    panel_d_grid = grid[0, 2].subgridspec(1, 2, wspace=0.42)
+    panel_d_growth_axis = figure.add_subplot(panel_d_grid[0, 0])
+    panel_d_birth_axis = figure.add_subplot(panel_d_grid[0, 1])
+
     draw_panel_a(panel_a_axis)
-    draw_panel_b(
-        panel_b_growth_axis,
-        panel_b_matrix_axes,
-        panel_b_birth_axis,
-        profiles,
-        fit,
-    )
-    draw_panel_c(
-        panel_c_tree_axis,
-        panel_c_likelihood_axis,
-        panel_c_count_axis,
-        tree_segments,
-        transition_profile_path,
-        count_likelihood_path,
-        fit,
-    )
+    draw_panel_b(panel_b_axis, count_likelihood_path, fit)
+    draw_panel_c(panel_c_axis, tree_segments, fit)
+    draw_panel_d(panel_d_growth_axis, panel_d_birth_axis, profiles)
     for axis, letter in (
         (panel_a_axis, "A"),
-        (panel_c_tree_axis, "C"),
-        (panel_b_growth_axis, "B"),
+        (panel_b_axis, "B"),
+        (panel_c_axis, "C"),
+        (panel_d_growth_axis, "D"),
     ):
-        position = axis.get_position()
-        figure.text(
-            position.x0 - 0.025,
-            position.y1 + 0.012,
+        _add_panel_label(
+            figure,
+            axis,
             letter,
-            fontsize=FIGURE_FONT_SIZE,
-            fontweight="bold",
-            va="top",
-            ha="left",
+            x_offset=-0.065 if letter == "C" else -0.025,
+            y_offset=0.06 if letter == "C" else 0.012,
         )
     outputs["composite"] = _save_figure(figure, output_dir / "figure_composite")
     plt.close(figure)
 
     profile_csv = _write_profile_data(
-        output_dir / "panel_B_profile_intervals.csv",
+        output_dir / "panel_D_profile_intervals.csv",
         profiles,
         fit,
     )
@@ -1029,9 +809,9 @@ def generate_figures(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a three-panel SGOOTR CRC11 manuscript figure with "
-            "transition graph, identifiable parameter estimates, and "
-            "posterior-MAP colored tree."
+            "Generate a four-panel SGOOTR CRC11 manuscript figure with "
+            "transition graph, transition-count likelihood, colored tree, "
+            "and parameter profile intervals."
         )
     )
     parser.add_argument("--inference", type=Path, default=DEFAULT_FIT)
@@ -1040,12 +820,6 @@ def main() -> None:
         "--tree-segments",
         type=Path,
         default=DEFAULT_TREE_SEGMENTS,
-    )
-    parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR)
-    parser.add_argument(
-        "--transition-profile",
-        type=Path,
-        default=DEFAULT_TRANSITION_PROFILE,
     )
     parser.add_argument(
         "--count-likelihood",
@@ -1058,8 +832,6 @@ def main() -> None:
         inference_path=args.inference,
         profiles_dir=args.profiles_dir,
         tree_segments=args.tree_segments,
-        input_dir=args.input_dir,
-        transition_profile_path=args.transition_profile,
         count_likelihood_path=args.count_likelihood,
         output_dir=args.output_dir,
     )
