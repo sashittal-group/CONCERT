@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -13,17 +12,29 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle, FancyArrowPatch, Patch
+from matplotlib.patches import Circle, FancyArrowPatch
 from matplotlib.path import Path as MatplotlibPath
+from matplotlib.ticker import MaxNLocator
+from PIL import Image
+
+from src.summarize_fixed_sampling_transition_runs import RunParameters
 
 from .cell_colors import CELL_TYPE_COLORS
-from .panel_a import draw_panel_a, draw_panel_a_arrows, generate_panel_a
+from .panel_a import draw_panel_a, generate_panel_a, load_panel_a_image
+from .panel_b import (
+    COMPOSITE_FONT_SIZE as PANEL_B_COMPOSITE_FONT_SIZE,
+    draw_panel_b as draw_convergence_panel_b,
+    generate_panel_b as generate_convergence_panel_b,
+    load_convergence_data,
+)
 from .panel_sensitivity import (
+    PANEL_C_COMPOSITE_DATASET_FONT_SIZE,
+    PANEL_C_COMPOSITE_FONT_SIZE,
+    PANEL_C_WIDTH_RATIOS,
     ProfilePanelData,
-    draw_profile_panel,
-    generate_panel_d,
-    generate_panel_e,
-    generate_panel_f,
+    draw_boxplot_panel,
+    draw_boxplot_legend,
+    generate_boxplot_panel,
     load_profile_panel_data,
 )
 from .style import (
@@ -56,8 +67,10 @@ NODE_POSITIONS = {
     "Somite": (0.97, 0.10),
 }
 FORMATS = ("png", "pdf", "svg")
-SEGMENT_COUNTS_FILENAME = "state_segment_counts_by_time_100.csv"
-EXPECTED_COUNT_INTERVALS = 101
+CONDITION_SUBPANEL_FIGURE_SIZE = (3.8, 3.8)
+COMPOSITE_FIGURE_SIZE = (16.5, 5.2)
+PANEL_GRID_HEIGHT_RATIOS = (0.20, 0.80)
+PANEL_GRID_HSPACE = 0.03
 
 
 @dataclass(frozen=True)
@@ -87,13 +100,6 @@ class Fit:
         else:
             probability = self.transitions[(0, target_state)]
         return probability / self.delta_t
-
-
-@dataclass(frozen=True)
-class SegmentCounts:
-    time_starts: tuple[float, ...]
-    time_ends: tuple[float, ...]
-    state_counts: dict[str, tuple[int, ...]]
 
 
 def _read_vector(lines: list[str], name: str, source: Path) -> tuple[float, ...]:
@@ -189,75 +195,6 @@ def load_fit(dataset: str, data_root: Path = DATA_ROOT) -> Fit:
         sampling=sampling,
         transitions=transitions,
         delta_t=delta_t,
-    )
-
-
-def _read_segment_counts(path: Path) -> SegmentCounts:
-    required_columns = {
-        "time_start",
-        "time_end",
-        "total_segments",
-        *STATES,
-    }
-    with path.open(newline="", encoding="utf-8") as source:
-        reader = csv.DictReader(source)
-        if reader.fieldnames is None:
-            raise ValueError(f"Missing CSV header in {path}")
-        missing_columns = required_columns - set(reader.fieldnames)
-        if missing_columns:
-            raise ValueError(
-                f"Missing columns in {path}: {sorted(missing_columns)}"
-            )
-
-        starts = []
-        ends = []
-        state_counts = {state: [] for state in STATES}
-        for row_number, row in enumerate(reader, start=2):
-            try:
-                time_start = float(row["time_start"])
-                time_end = float(row["time_end"])
-                counts = {
-                    state: int(row[state])
-                    for state in STATES
-                }
-                total_segments = int(row["total_segments"])
-            except (TypeError, ValueError) as error:
-                raise ValueError(
-                    f"Invalid count row {row_number} in {path}"
-                ) from error
-            if (
-                not math.isfinite(time_start)
-                or not math.isfinite(time_end)
-                or time_start >= time_end
-                or any(count < 0 for count in counts.values())
-                or total_segments != sum(counts.values())
-            ):
-                raise ValueError(f"Invalid count row {row_number} in {path}")
-            if starts and not math.isclose(
-                time_start,
-                ends[-1],
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            ):
-                raise ValueError(f"Noncontiguous time intervals in {path}")
-
-            starts.append(time_start)
-            ends.append(time_end)
-            for state in STATES:
-                state_counts[state].append(counts[state])
-
-    if len(starts) != EXPECTED_COUNT_INTERVALS:
-        raise ValueError(
-            f"Expected {EXPECTED_COUNT_INTERVALS} intervals in {path}; "
-            f"found {len(starts)}"
-        )
-    return SegmentCounts(
-        time_starts=tuple(starts),
-        time_ends=tuple(ends),
-        state_counts={
-            state: tuple(counts)
-            for state, counts in state_counts.items()
-        },
     )
 
 
@@ -519,7 +456,7 @@ def generate_condition_subpanel(
             if maximum_transition_rate is None
             else maximum_transition_rate
         )
-    figure, axis = plt.subplots(figsize=(3.8, 3.8))
+    figure, axis = plt.subplots(figsize=CONDITION_SUBPANEL_FIGURE_SIZE)
     draw_condition(
         axis,
         fit,
@@ -534,351 +471,101 @@ def generate_condition_subpanel(
 
 
 def generate_panel_b(
-    tls_fit: Fit,
-    tlsc_fit: Fit,
+    data_root: Path,
     output_dir: Path,
-    *,
-    panel_letter: bool = True,
 ) -> dict[str, Path]:
-    maximum_net_growth, maximum_transition_rate = _figure_scales(tls_fit, tlsc_fit)
-    figure, axes = plt.subplots(1, 2, figsize=(7.5, 4.4))
-    draw_condition(
-        axes[0],
-        tls_fit,
-        _condition_title(tls_fit),
-        maximum_net_growth,
-        maximum_transition_rate,
-    )
-    draw_condition(
-        axes[1],
-        tlsc_fit,
-        _condition_title(tlsc_fit),
-        maximum_net_growth,
-        maximum_transition_rate,
-    )
-    if panel_letter:
-        figure.text(
-            0.005,
-            0.995,
-            "B",
-            fontsize=PANEL_LABEL_SIZE,
-            fontweight="bold",
-            va="top",
-        )
-    figure.subplots_adjust(left=0.01, right=0.99, top=0.97, bottom=0.01, wspace=0.18)
-    outputs = _save_figure(figure, output_dir / "panel_B")
-    plt.close(figure)
-    return outputs
+    return generate_convergence_panel_b(data_root, output_dir)
 
 
-def _draw_count_axes(
-    axes: tuple[Axes, Axes],
-    counts_by_dataset: dict[str, SegmentCounts],
-) -> tuple[float, float]:
-    tls_counts = counts_by_dataset["TLS"]
-    tlsc_counts = counts_by_dataset["TLSC"]
-    time_min = tls_counts.time_starts[0]
-    time_max = tls_counts.time_ends[-1]
-    for dataset, counts in counts_by_dataset.items():
-        if not math.isclose(counts.time_starts[0], time_min, abs_tol=1e-12):
-            raise ValueError(f"{dataset} count table has a different start time.")
-        if not math.isclose(counts.time_ends[-1], time_max, abs_tol=1e-12):
-            raise ValueError(f"{dataset} count table has a different end time.")
-
-    max_lineages = max(
-        sum(counts.state_counts[state][bin_index] for state in STATES)
-        for counts in (tls_counts, tlsc_counts)
-        for bin_index in range(len(counts.time_starts))
-    )
-    for axis, dataset, counts in zip(
-        axes,
-        ("TLS", "TLSC"),
-        (tls_counts, tlsc_counts),
-    ):
-        widths = [
-            (end - start) * 0.94
-            for start, end in zip(counts.time_starts, counts.time_ends)
-        ]
-        centers = [
-            (start + end) / 2
-            for start, end in zip(counts.time_starts, counts.time_ends)
-        ]
-        bottom = [0] * len(centers)
-        for state in STATES:
-            heights = counts.state_counts[state]
-            axis.bar(
-                centers,
-                heights,
-                width=widths,
-                bottom=bottom,
-                color=STATE_COLORS[state],
-                linewidth=0,
-            )
-            bottom = [
-                prior + height
-                for prior, height in zip(bottom, heights)
-            ]
-        dataset_label = (
-            "TLS"
-            if dataset == "TLS"
-            else r"TLS$^{\mathrm{CL}}$"
-        )
-        axis.text(
-            0.03,
-            0.90,
-            dataset_label,
-            transform=axis.transAxes,
-            ha="left",
-            va="top",
-            fontsize=PANEL_BC_FONT_SIZE,
-        )
-        axis.set_ylim(0, max_lineages * 1.04)
-        axis.tick_params(axis="both", labelsize=PANEL_BC_FONT_SIZE)
-        axis.spines["top"].set_visible(False)
-        axis.spines["right"].set_visible(False)
-        axis.set_xlim(time_max, time_min)
-
-    ticks = [
-        round(time_max - index * (time_max - time_min) / 10, 2)
-        for index in range(11)
-    ]
+def _match_y_axis_scale(axes: tuple[Axes, Axes]) -> None:
+    lower = min(axis.get_ylim()[0] for axis in axes)
+    upper = max(axis.get_ylim()[1] for axis in axes)
+    ticks = MaxNLocator(nbins=5).tick_values(lower, upper)
     for axis in axes:
-        axis.set_xticks(ticks)
-    axes[0].tick_params(axis="x", labelbottom=False)
-    axes[1].set_xticklabels(
-        [f"{1.0 - tick:g}" for tick in ticks],
-        fontsize=PANEL_BC_FONT_SIZE,
-    )
-    axes[1].set_xlabel("Time", fontsize=PANEL_BC_FONT_SIZE, labelpad=5)
-    axes[0].spines["bottom"].set_visible(False)
-    return time_min, time_max
-
-
-def _draw_shared_lineage_ylabel(axis: Axes) -> None:
-    axis.set_axis_off()
-    axis.text(
-        0.2,
-        0.5,
-        "Number of lineages",
-        rotation=90,
-        ha="center",
-        va="center",
-        fontsize=PANEL_BC_FONT_SIZE,
-    )
-
-
-def _draw_panel_c(
-    figure: Figure,
-    axes: tuple[Axes, Axes],
-    ylabel_axis: Axes,
-    counts_by_dataset: dict[str, SegmentCounts],
-    *,
-    legend_anchor: tuple[float, float],
-    panel_label_position: tuple[float, float] | None,
-    legend_loc: str = "upper center",
-) -> None:
-    _draw_count_axes(axes, counts_by_dataset)
-    _draw_shared_lineage_ylabel(ylabel_axis)
-    figure.legend(
-        handles=[
-            Patch(facecolor=STATE_COLORS[state], label=state)
-            for state in STATES
-        ],
-        title="Most likely state",
-        loc=legend_loc,
-        bbox_to_anchor=legend_anchor,
-        frameon=False,
-        ncols=3,
-        fontsize=PANEL_BC_FONT_SIZE,
-        title_fontsize=PANEL_BC_FONT_SIZE,
-    )
-    if panel_label_position is not None:
-        figure.text(
-            *panel_label_position,
-            "C",
-            fontsize=PANEL_LABEL_SIZE,
-            fontweight="bold",
-            va="top",
-        )
-
-
-def generate_panel_c(
-    counts_by_dataset: dict[str, SegmentCounts],
-    output_dir: Path,
-) -> dict[str, Path]:
-    figure = plt.figure(figsize=(5.4, 6.4))
-    grid = figure.add_gridspec(
-        2,
-        2,
-        width_ratios=(0.16, 0.84),
-        left=0.05,
-        right=0.99,
-        top=0.86,
-        bottom=0.11,
-        hspace=0.10,
-        wspace=0.02,
-    )
-    ylabel_axis = figure.add_subplot(grid[:, 0])
-    top_axis = figure.add_subplot(grid[0, 1])
-    bottom_axis = figure.add_subplot(grid[1, 1], sharex=top_axis, sharey=top_axis)
-    axes = (top_axis, bottom_axis)
-    _draw_panel_c(
-        figure,
-        axes,
-        ylabel_axis,
-        counts_by_dataset,
-        legend_anchor=(0.56, 0.94),
-        panel_label_position=(0.005, 0.99),
-        legend_loc="center",
-    )
-    outputs = _save_figure(figure, output_dir / "panel_C")
-    plt.close(figure)
-    return outputs
+        axis.set_ylim(ticks[0], ticks[-1])
+        axis.set_yticks(ticks)
 
 
 def generate_composite(
-    tls_fit: Fit,
-    tlsc_fit: Fit,
     output_dir: Path,
-    counts_by_dataset: dict[str, SegmentCounts],
     profile_panel_data: ProfilePanelData,
+    runs_by_dataset: dict[str, list[RunParameters]],
+    *,
+    panel_a_image: Image.Image | None = None,
 ) -> dict[str, Path]:
-    maximum_net_growth, maximum_transition_rate = _figure_scales(tls_fit, tlsc_fit)
-    figure = plt.figure(figsize=(15.5, 8.6))
-    outer_grid = figure.add_gridspec(
-        2,
+    if panel_a_image is None:
+        panel_a_image = load_panel_a_image()
+    figure = plt.figure(figsize=COMPOSITE_FIGURE_SIZE)
+    panel_grid = figure.add_gridspec(
         1,
-        height_ratios=(1.0, 1.0),
-        left=0.04,
+        3,
+        width_ratios=(0.8, 2.0, 2.7),
+        left=0.025,
         right=0.99,
-        top=0.97,
-        bottom=0.11,
-        hspace=0.22,
+        top=0.90,
+        bottom=0.22,
+        wspace=0.20,
     )
-    top_grid = outer_grid[0, 0].subgridspec(
-        1,
+
+    panel_a_axis = figure.add_subplot(panel_grid[0, 0])
+    draw_panel_a(panel_a_axis, panel_a_image)
+
+    panel_b_grid = panel_grid[0, 1].subgridspec(
+        2,
         3,
-        width_ratios=(0.9, 2.0, 1.55),
-        wspace=0.10,
+        height_ratios=PANEL_GRID_HEIGHT_RATIOS,
+        hspace=PANEL_GRID_HSPACE,
+        wspace=0.50,
     )
-    bottom_grid = outer_grid[1, 0].subgridspec(
-        1,
+    panel_b_legend_axis = figure.add_subplot(panel_b_grid[0, :])
+    panel_b_legend_axis.set_axis_off()
+    panel_b_axes = tuple(
+        figure.add_subplot(panel_b_grid[1, index]) for index in range(3)
+    )
+    draw_convergence_panel_b(
+        panel_b_axes,
+        runs_by_dataset,
+        font_size=PANEL_B_COMPOSITE_FONT_SIZE,
+        legend_axis=panel_b_legend_axis,
+    )
+
+    panel_c_grid = panel_grid[0, 2].subgridspec(
+        2,
         3,
-        width_ratios=(1.35, 1.2, 1.35),
-        wspace=0.10,
+        height_ratios=PANEL_GRID_HEIGHT_RATIOS,
+        width_ratios=PANEL_C_WIDTH_RATIOS,
+        hspace=PANEL_GRID_HSPACE,
+        wspace=0.43,
     )
-
-    panel_a_axis = figure.add_subplot(top_grid[0, 0])
-    panel_a_label_texts = draw_panel_a(panel_a_axis)
-
-    panel_b_grid = top_grid[0, 1].subgridspec(1, 2, wspace=0.08)
-    panel_b_axes = (
-        figure.add_subplot(panel_b_grid[0, 0]),
-        figure.add_subplot(panel_b_grid[0, 1]),
+    panel_c_legend_axis = figure.add_subplot(panel_c_grid[0, :])
+    draw_boxplot_legend(
+        panel_c_legend_axis,
+        font_size=PANEL_C_COMPOSITE_FONT_SIZE,
     )
-    draw_condition(
-        panel_b_axes[0],
-        tls_fit,
-        _condition_title(tls_fit),
-        maximum_net_growth,
-        maximum_transition_rate,
+    panel_c_axes = tuple(
+        figure.add_subplot(panel_c_grid[1, index]) for index in range(3)
     )
-    draw_condition(
-        panel_b_axes[1],
-        tlsc_fit,
-        _condition_title(tlsc_fit),
-        maximum_net_growth,
-        maximum_transition_rate,
-    )
-
-    panel_c_layout = top_grid[0, 2].subgridspec(
-        2,
-        1,
-        height_ratios=(0.13, 0.87),
-        hspace=0.0,
-    )
-    legend_layout = panel_c_layout[0, 0].subgridspec(
-        1,
-        2,
-        width_ratios=(0.12, 0.88),
-        wspace=0.0,
-    )
-    panel_c_plot_layout = panel_c_layout[1, 0].subgridspec(
-        1,
-        2,
-        width_ratios=(0.16, 0.84),
-        wspace=0.02,
-    )
-    panel_c_grid = panel_c_plot_layout[0, 1].subgridspec(
-        2,
-        1,
-        hspace=0.10,
-    )
-    panel_c_axes = (
-        figure.add_subplot(panel_c_grid[0, 0]),
-        figure.add_subplot(panel_c_grid[1, 0]),
-    )
-    panel_c_ylabel_axis = figure.add_subplot(panel_c_plot_layout[0, 0])
-    legend_box = legend_layout[0, 1].get_position(figure)
-    _draw_panel_c(
-        figure,
+    draw_boxplot_panel(
         panel_c_axes,
-        panel_c_ylabel_axis,
-        counts_by_dataset,
-        legend_anchor=(
-            legend_box.x0 + legend_box.width / 2,
-            legend_box.y0 + legend_box.height / 2,
-        ),
-        panel_label_position=None,
-        legend_loc="center",
+        profile_panel_data,
+        font_size=PANEL_C_COMPOSITE_FONT_SIZE,
+        dataset_label_font_size=PANEL_C_COMPOSITE_DATASET_FONT_SIZE,
+        group_label_y=-0.22,
     )
+    _match_y_axis_scale((panel_b_axes[0], panel_c_axes[0]))
+    _match_y_axis_scale((panel_b_axes[1], panel_c_axes[1]))
 
-    for column, letter in enumerate(("D", "E", "F")):
-        if letter == "E":
-            panel_e_grid = bottom_grid[0, column].subgridspec(
-                3,
-                3,
-                width_ratios=(0.24, 0.68, 0.08),
-                height_ratios=(0.05, 0.90, 0.05),
-                wspace=0.0,
-                hspace=0.0,
-            )
-            axis = figure.add_subplot(panel_e_grid[1, 1])
-        else:
-            panel_grid = bottom_grid[0, column].subgridspec(
-                3,
-                3,
-                width_ratios=(0.06, 0.88, 0.06),
-                height_ratios=(0.05, 0.90, 0.05),
-                wspace=0.0,
-                hspace=0.0,
-            )
-            axis = figure.add_subplot(panel_grid[1, 1])
-        draw_profile_panel(
-            axis,
+    for column, letter in enumerate(("A", "B", "C")):
+        position = panel_grid[0, column].get_position(figure)
+        figure.text(
+            position.x0 + 0.006,
+            position.y1 + 0.012,
             letter,
-            profile_panel_data,
-            font_size=FONT_SIZE,
-            dataset_label_font_size=FONT_SIZE,
+            fontsize=12,
+            fontweight="bold",
+            va="top",
         )
 
-    panel_grids = (top_grid, bottom_grid)
-    for row, letters in enumerate((("A", "B", "C"), ("D", "E", "F"))):
-        for column, letter in enumerate(letters):
-            position = panel_grids[row][0, column].get_position(figure)
-            label_y = position.y1 - 0.006
-            if row == 1:
-                label_y = position.y1 + 0.012
-            figure.text(
-                position.x0 + 0.006,
-                label_y,
-                letter,
-                fontsize=PANEL_LABEL_SIZE,
-                fontweight="bold",
-                va="top",
-            )
-
-    draw_panel_a_arrows(panel_a_axis, panel_a_label_texts)
     outputs = _save_figure(figure, output_dir / "figure_composite")
     plt.close(figure)
     return outputs
@@ -893,21 +580,12 @@ def generate_figures(
     tls_fit = load_fit("TLS", data_root)
     tlsc_fit = load_fit("TLSC", data_root)
     maximum_net_growth, maximum_transition_rate = _figure_scales(tls_fit, tlsc_fit)
-    counts_by_dataset = {
-        dataset: _read_segment_counts(
-            data_root
-            / dataset
-            / "fixed_sampling_0.1"
-            / "state_coloring"
-            / "plots"
-            / SEGMENT_COUNTS_FILENAME
-        )
-        for dataset in ("TLS", "TLSC")
-    }
     profile_panel_data = load_profile_panel_data(data_root, output_dir)
+    runs_by_dataset = load_convergence_data(data_root)
+    panel_a_image = load_panel_a_image()
 
     outputs = {
-        "panel_A": generate_panel_a(output_dir),
+        "panel_A": generate_panel_a(output_dir, panel_image=panel_a_image),
         "TLS": generate_condition_subpanel(
             tls_fit,
             output_dir,
@@ -920,17 +598,13 @@ def generate_figures(
             maximum_net_growth=maximum_net_growth,
             maximum_transition_rate=maximum_transition_rate,
         ),
-        "panel_B": generate_panel_b(tls_fit, tlsc_fit, output_dir),
-        "panel_C": generate_panel_c(counts_by_dataset, output_dir),
-        "panel_D": generate_panel_d(profile_panel_data, output_dir),
-        "panel_E": generate_panel_e(profile_panel_data, output_dir),
-        "panel_F": generate_panel_f(profile_panel_data, output_dir),
+        "panel_B": generate_panel_b(data_root, output_dir),
+        "panel_C": generate_boxplot_panel(profile_panel_data, output_dir),
         "composite": generate_composite(
-            tls_fit,
-            tlsc_fit,
             output_dir,
-            counts_by_dataset,
             profile_panel_data,
+            runs_by_dataset,
+            panel_a_image=panel_a_image,
         ),
     }
     for panel_outputs in outputs.values():

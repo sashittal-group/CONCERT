@@ -7,6 +7,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 import networkx as nx
 import numpy as np
@@ -78,14 +79,17 @@ def _tree_layout(
     return x_positions, y_positions, leaf_order, max_height
 
 
-def _plot_subtree(
+def _draw_subtree(
+    axis: Axes,
     segments: pd.DataFrame,
-    output_path: Path,
     dataset: str,
     subtree_name: str,
     state_names: tuple[str, ...],
-    dpi: int,
-) -> dict[str, object]:
+    transition_markers: tuple[tuple[float, str], ...] = (),
+    state_colors: dict[str, str] | None = None,
+    title: str | None = None,
+    font_size: float | None = None,
+) -> float:
     if segments.empty:
         raise ValueError(f"No edge segments to plot for {subtree_name}")
     segments = segments.drop_duplicates("segment_id").sort_values(
@@ -114,8 +118,8 @@ def _plot_subtree(
             **row._asdict(),
         )
 
-    x_positions, y_positions, leaf_order, max_height = _tree_layout(graph)
-    figure, axis = plt.subplots(figsize=(8, 5))
+    x_positions, y_positions, _, max_height = _tree_layout(graph)
+    state_colors = CELL_STATE_COLORS if state_colors is None else state_colors
     state_counts = {state: 0 for state in state_names}
     probabilities = []
     axis.scatter(
@@ -128,7 +132,7 @@ def _plot_subtree(
     )
     for parent, child, data in graph.edges(data=True):
         state = str(data["most_likely_state"])
-        if state not in CELL_STATE_COLORS:
+        if state not in state_colors:
             raise ValueError(f"Unknown state label {state!r} in {subtree_name}")
         probability = float(data["most_likely_state_probability"])
         state_counts[state] += 1
@@ -136,14 +140,14 @@ def _plot_subtree(
         axis.plot(
             [x_positions[parent], x_positions[child]],
             [y_positions[parent], y_positions[parent]],
-            color=CELL_STATE_COLORS[state],
+            color=state_colors[state],
             alpha=0.5,
             zorder=2,
         )
         axis.plot(
             [x_positions[child], x_positions[child]],
             [y_positions[parent], y_positions[child]],
-            color=CELL_STATE_COLORS[state],
+            color=state_colors[state],
             alpha=0.5,
             zorder=2,
         )
@@ -152,7 +156,7 @@ def _plot_subtree(
         Line2D(
             [0],
             [0],
-            color=CELL_STATE_COLORS[state],
+            color=state_colors[state],
             linewidth=3,
             label=state,
         )
@@ -165,9 +169,13 @@ def _plot_subtree(
         bbox_to_anchor=(0.5, 1.02),
         frameon=False,
         ncol=len(state_names),
+        fontsize=font_size,
     )
-    axis.set_title(f"{dataset}: {subtree_name}", fontsize=10)
-    axis.set_ylabel("Time")
+    axis.set_title(
+        title if title is not None else f"{dataset}: {subtree_name}",
+        fontsize=10 if font_size is None else font_size,
+    )
+    axis.set_ylabel("Time", fontsize=font_size)
     major_ticks = np.linspace(0, max_height, 21)
     axis.set_yticks(-major_ticks)
     tick_step = max_height / (len(major_ticks) - 1)
@@ -176,12 +184,50 @@ def _plot_subtree(
     )
     axis.set_yticklabels(
         [f"{time:.{tick_precision}f}" for time in major_ticks],
-        fontsize=8,
+        fontsize=8 if font_size is None else font_size,
     )
+    axis.set_ylim(-max_height, 0.0)
     axis.set_xticks([])
     axis.spines["top"].set_visible(False)
     axis.spines["right"].set_visible(False)
     axis.spines["bottom"].set_visible(False)
+    for transition_time, color in transition_markers:
+        if not 0.0 < transition_time < max_height:
+            raise ValueError(
+                f"Transition time {transition_time} is outside the subtree time range."
+            )
+        axis.axhline(
+            -transition_time,
+            color=color,
+            linewidth=1.3,
+            linestyle="--",
+            alpha=0.9,
+            zorder=4,
+        )
+    return max_height
+
+
+def _plot_subtree(
+    segments: pd.DataFrame,
+    output_path: Path,
+    dataset: str,
+    subtree_name: str,
+    state_names: tuple[str, ...],
+    dpi: int,
+) -> dict[str, object]:
+    figure, axis = plt.subplots(figsize=(8, 5))
+    _draw_subtree(
+        axis,
+        segments,
+        dataset,
+        subtree_name,
+        state_names,
+    )
+    graph = nx.DiGraph()
+    for row in segments.itertuples(index=False):
+        graph.add_edge(str(row.segment_parent_node), str(row.segment_child_node))
+    probabilities = segments["most_likely_state_probability"].astype(float)
+    state_counts = segments["most_likely_state"].value_counts()
     figure.subplots_adjust(top=0.76, bottom=0.1, left=0.12, right=0.97)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_path, dpi=dpi, bbox_inches="tight")
@@ -191,9 +237,14 @@ def _plot_subtree(
         "subtree": subtree_name,
         "figure": output_path.as_posix(),
         "segment_count": graph.number_of_edges(),
-        "leaf_count": len(leaf_order),
+        "leaf_count": sum(
+            graph.out_degree(node) == 0 for node in graph.nodes
+        ),
         "mean_most_likely_probability": float(np.mean(probabilities)),
-        **{f"segments_{state}": count for state, count in state_counts.items()},
+        **{
+            f"segments_{state}": int(state_counts.get(state, 0))
+            for state in state_names
+        },
     }
 
 

@@ -63,6 +63,23 @@ cohort/CRC label in the plot.
 
 The same command supports other single-tree S10 or S15 CRC input directories.
 
+To profile the likelihood by moving each event time individually while holding
+the other event times and every fitted rate, sampling probability, and transition
+probability fixed, run:
+
+```bash
+.venv/bin/python -m src.results.sgootr.transition_time_profile \
+  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
+  --inference data/sgootr/all_trees/combined_inference/S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt \
+  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC11_ptln_transition_count_analysis/ptln_2/fixed_parameter_time_profile
+```
+
+The script checks that the fixed-parameter likelihood at the saved event times
+reproduces the inference result before writing the CSV and PNG/PDF profiles.
+Each event is swept across the 0.001 time grid subject to preserving the order
+of all event times and keeping them before the tree root time. A zero-probability
+likelihood is retained as negative infinity in the profile.
+
 Generate the matching CRC11 plots for either state-specific fit with:
 
 ```bash

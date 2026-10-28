@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 
 import matplotlib
 
@@ -8,16 +11,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.patches import Ellipse, FancyArrowPatch, FancyBboxPatch, PathPatch
+from matplotlib.patches import Circle, Ellipse, FancyArrowPatch, FancyBboxPatch, PathPatch
 from matplotlib.path import Path as MatplotlibPath
-from matplotlib.text import Text
+from PIL import Image
 
-from .style import FONT_FAMILY, FONT_SIZE, PANEL_LABEL_SIZE
+from .style import FONT_FAMILY, FONT_SIZE
 
 
+FIGURE_SIZE = (3.02, 2.635)
+PANEL_A_PDF_PATH = Path(__file__).with_name("tls_panelA.pdf")
+PANEL_A_RENDER_WIDTH = 1800
 FORMATS = ("png", "pdf", "svg")
 STATE_COLORS = {
-    "NMPs": "#A6A6A6",
+    "NMPs": "#8C8C8C",
     "NeuralTube": "#69B64F",
     "Somite": "#D393B1",
 }
@@ -25,24 +31,85 @@ STATE_COLORS = {
 matplotlib.rcParams.update({"font.family": FONT_FAMILY, "font.size": FONT_SIZE})
 
 
-def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
-    axis.set_xlim(-0.22, 0.86)
-    axis.set_ylim(0.02, 1.02)
+def load_panel_a_image() -> Image.Image:
+    if not PANEL_A_PDF_PATH.is_file():
+        raise FileNotFoundError(f"Panel A source PDF not found: {PANEL_A_PDF_PATH}")
+
+    with TemporaryDirectory(prefix="tls-panel-a-") as temporary_directory:
+        image_path = Path(temporary_directory) / "panel_A.png"
+        subprocess.run(
+            [
+                "sips",
+                "-s",
+                "format",
+                "png",
+                "--resampleWidth",
+                str(PANEL_A_RENDER_WIDTH),
+                str(PANEL_A_PDF_PATH),
+                "--out",
+                str(image_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        with Image.open(image_path) as image:
+            return image.convert("RGBA").copy()
+
+
+def draw_panel_a(axis: Axes, panel_image: Image.Image) -> None:
+    axis.imshow(panel_image, aspect="equal", interpolation="lanczos")
+    axis.set_axis_off()
+
+
+def draw_legacy_panel_a(axis: Axes, *, font_size: int = FONT_SIZE) -> None:
+    axis.set_xlim(-0.74, 1.03)
+    axis.set_ylim(0.03, 1.0)
     axis.set_aspect("auto")
     axis.axis("off")
 
-    vessel_path = MatplotlibPath(
+    legend_rows = (
+        ("NMPs", 0.60),
+        ("Somite", 0.47),
+        ("Neural Tube", 0.34),
+    )
+    for label, y_position in legend_rows:
+        axis.text(
+            -0.39,
+            y_position,
+            label,
+            ha="right",
+            va="center",
+            fontsize=font_size,
+        )
+        axis.add_patch(
+            Circle(
+                (-0.31, y_position),
+                radius=0.022,
+                facecolor=STATE_COLORS[
+                    "NeuralTube" if label == "Neural Tube" else label
+                ],
+                edgecolor="none",
+                zorder=4,
+            )
+        )
+
+    tissue = MatplotlibPath(
         [
-            (0.08, 0.93),
-            (0.08, 0.22),
-            (0.08, 0.08),
-            (0.80, 0.08),
-            (0.80, 0.22),
-            (0.80, 0.93),
+            (0.03, 0.96),
+            (0.03, 0.22),
+            (0.03, 0.08),
+            (0.18, 0.07),
+            (0.52, 0.07),
+            (0.87, 0.07),
+            (0.97, 0.20),
+            (0.97, 0.96),
         ],
         [
             MatplotlibPath.MOVETO,
             MatplotlibPath.LINETO,
+            MatplotlibPath.CURVE4,
+            MatplotlibPath.CURVE4,
             MatplotlibPath.CURVE4,
             MatplotlibPath.CURVE4,
             MatplotlibPath.CURVE4,
@@ -51,7 +118,7 @@ def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
     )
     axis.add_patch(
         PathPatch(
-            vessel_path,
+            tissue,
             fill=False,
             edgecolor="#B8B8B8",
             linewidth=1.5,
@@ -61,8 +128,8 @@ def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
         )
     )
     axis.plot(
-        (0.08, 0.80),
-        (0.93, 0.93),
+        (0.03, 0.97),
+        (0.96, 0.96),
         linestyle=(0, (4, 3)),
         color="#B8B8B8",
         linewidth=1.5,
@@ -71,9 +138,9 @@ def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
 
     axis.add_patch(
         FancyBboxPatch(
-            (0.36, 0.29),
-            0.16,
-            0.61,
+            (0.43, 0.27),
+            0.17,
+            0.66,
             boxstyle="round,pad=0,rounding_size=0.015",
             facecolor=STATE_COLORS["NeuralTube"],
             edgecolor="none",
@@ -82,13 +149,12 @@ def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
         )
     )
 
-    somite_rows = (0.78, 0.64, 0.50)
-    for y_position in somite_rows:
-        for x_position in (0.17, 0.57):
+    for y_position in (0.77, 0.63, 0.49):
+        for x_position in (0.12, 0.72):
             axis.add_patch(
                 FancyBboxPatch(
                     (x_position, y_position),
-                    0.15,
+                    0.17,
                     0.105,
                     boxstyle="round,pad=0,rounding_size=0.025",
                     facecolor=STATE_COLORS["Somite"],
@@ -97,11 +163,11 @@ def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
                     zorder=2,
                 )
             )
-    for x_position in (0.17, 0.57):
+    for x_position in (0.12, 0.72):
         axis.add_patch(
             FancyBboxPatch(
-                (x_position, 0.28),
-                0.15,
+                (x_position, 0.26),
+                0.17,
                 0.19,
                 boxstyle="round,pad=0,rounding_size=0.035",
                 facecolor=STATE_COLORS["Somite"],
@@ -113,110 +179,88 @@ def draw_panel_a(axis: Axes) -> tuple[Text, ...]:
 
     axis.add_patch(
         Ellipse(
-            (0.44, 0.23),
-            width=0.39,
+            (0.515, 0.17),
+            width=0.40,
             height=0.14,
             facecolor=STATE_COLORS["NMPs"],
             edgecolor="none",
-            alpha=0.9,
+            alpha=0.88,
             zorder=2,
         )
     )
-
-    labels = (
-        ("Neural\nTube", 0.63, 0.36),
-        ("Somite", 0.43, 0.17),
-        ("NMPs", 0.18, 0.325),
-    )
-    label_texts = []
-    for label, y_position, target_x in labels:
-        label_texts.append(
-            axis.text(
-                -0.17,
-                y_position,
-                label,
-                ha="left",
-                va="center",
-                fontsize=FONT_SIZE,
-                linespacing=1.15,
-                color="#111111",
-            )
+    axis.add_patch(
+        FancyArrowPatch(
+            (0.48, 0.20),
+            (0.285, 0.49),
+            connectionstyle="arc3,rad=-0.18",
+            arrowstyle="-|>",
+            mutation_scale=11,
+            linewidth=1.0,
+            color="#111111",
+            zorder=3,
         )
-
-    return tuple(label_texts)
-
-
-def draw_panel_a_arrows(axis: Axes, label_texts: tuple[Text, ...]) -> None:
-    labels = (
-        (0.63, 0.36),
-        (0.43, 0.17),
-        (0.18, 0.325),
     )
-    axis.figure.canvas.draw()
-    renderer = axis.figure.canvas.get_renderer()
-    for (y_position, target_x), label_text in zip(
-        labels,
-        label_texts,
-    ):
-        label_right = label_text.get_window_extent(renderer).x1
-        y_display = axis.transData.transform((0, y_position))[1]
-        start_x = axis.transData.inverted().transform(
-            (
-                label_right + renderer.points_to_pixels(2),
-                y_display,
-            )
-        )[0]
-        minimum_arrow_length = 0.06
-        if target_x - start_x < minimum_arrow_length:
-            shift = minimum_arrow_length - (target_x - start_x)
-            label_text.set_x(label_text.get_position()[0] - shift)
-            axis.figure.canvas.draw()
-            renderer = axis.figure.canvas.get_renderer()
-            label_right = label_text.get_window_extent(renderer).x1
-            start_x = axis.transData.inverted().transform(
-                (
-                    label_right + renderer.points_to_pixels(2),
-                    y_display,
-                )
-            )[0]
-        axis.add_patch(
-            FancyArrowPatch(
-                (start_x, y_position),
-                (target_x, y_position),
-                arrowstyle="-|>",
-                mutation_scale=12,
-                linewidth=0.8,
-                color="#111111",
-                shrinkA=0,
-                shrinkB=0,
-                zorder=3,
-            )
+    axis.add_patch(
+        FancyArrowPatch(
+            (0.53, 0.21),
+            (0.515, 0.49),
+            arrowstyle="-|>",
+            mutation_scale=11,
+            linewidth=1.0,
+            color="#111111",
+            zorder=3,
         )
+    )
+    axis.add_patch(
+        Circle(
+            (0.285, 0.50),
+            radius=0.028,
+            facecolor="#A84479",
+            edgecolor="none",
+            zorder=4,
+        )
+    )
+    axis.add_patch(
+        Circle(
+            (0.515, 0.50),
+            radius=0.028,
+            facecolor="#5FA64B",
+            edgecolor="none",
+            zorder=4,
+        )
+    )
 
 
-def generate_panel_a(output_dir: Path) -> dict[str, Path]:
+def generate_panel_a(
+    output_dir: Path,
+    *,
+    figsize: tuple[float, float] = FIGURE_SIZE,
+    panel_image: Image.Image | None = None,
+) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    if panel_image is None:
+        panel_image = load_panel_a_image()
+
+    png_path = output_dir / "panel_A.png"
+    panel_image.save(png_path)
+    pdf_path = output_dir / "panel_A.pdf"
+    shutil.copyfile(PANEL_A_PDF_PATH, pdf_path)
+
     figure: Figure
     axis: Axes
-    figure, axis = plt.subplots(figsize=(4.5, 4.3))
-    label_texts = draw_panel_a(axis)
-    figure.text(
-        0.015,
-        0.99,
-        "A",
-        fontsize=PANEL_LABEL_SIZE,
-        fontweight="bold",
-        va="top",
+    figure, axis = plt.subplots(figsize=figsize)
+    draw_panel_a(axis, panel_image)
+    figure.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    svg_path = output_dir / "panel_A.svg"
+    figure.savefig(
+        svg_path,
+        format="svg",
+        bbox_inches="tight",
+        pad_inches=0,
+        transparent=True,
     )
-    figure.subplots_adjust(left=0.015, right=0.99, top=0.98, bottom=0.015)
-    draw_panel_a_arrows(axis, label_texts)
-    outputs = {}
-    for file_format in FORMATS:
-        output_path = output_dir / f"panel_A.{file_format}"
-        figure.savefig(output_path, dpi=300, bbox_inches="tight")
-        outputs[file_format] = output_path
     plt.close(figure)
-    return outputs
+    return {"png": png_path, "pdf": pdf_path, "svg": svg_path}
 
 
 if __name__ == "__main__":

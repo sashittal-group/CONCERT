@@ -571,6 +571,7 @@ def plot_state_specific_inference(
     state_segments = pd.DataFrame(state_rows)
     figures_dir = inference_path.parent / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
+    state_segments.to_csv(figures_dir / "CRC11_state_segments.csv", index=False)
     state_coloring_plotter.CELL_STATE_COLORS.update(
         config.plotting["state_colors"]
     )

@@ -211,7 +211,13 @@ def _write_temporary_output(log_path: Path, output_path: Path) -> None:
     output_path.write_text("\n".join(lines) + "\n")
 
 
-def load_runs(data_dir: Path) -> list[RunParameters]:
+def load_runs(
+    data_dir: Path,
+    *,
+    max_count: int | None = None,
+) -> list[RunParameters]:
+    if max_count is not None and max_count < 1:
+        raise ValueError("max_count must be positive when provided")
     counts: set[int] = set()
     for pattern in (
         "inference_transition_times_*.out",
@@ -221,7 +227,9 @@ def load_runs(data_dir: Path) -> list[RunParameters]:
         for path in data_dir.glob(pattern):
             match = RUN_NAME.fullmatch(path.name.removesuffix(".tmp.out").removesuffix(".out").removesuffix(".log"))
             if match:
-                counts.add(int(match.group(1)))
+                count = int(match.group(1))
+                if max_count is None or count <= max_count:
+                    counts.add(count)
 
     runs: list[RunParameters] = []
     for count in sorted(counts):

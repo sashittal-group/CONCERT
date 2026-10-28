@@ -117,6 +117,32 @@ class FixedSamplingTransitionSummaryTests(unittest.TestCase):
             self.assertEqual(runs[0].source, temporary_output)
             self.assertEqual(runs[0].iterations_completed, 0)
 
+    def test_max_count_skips_larger_transition_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            data_dir = Path(temporary_directory)
+            (data_dir / "inference_transition_times_2.out").write_text(
+                "LL=-10\n"
+                "birth: 5 6 7\n"
+                "death: 1 2 3\n"
+                "sampling: 0.1 0.1 0.1\n"
+                "transitions:\n"
+                "0->1 0.2\n"
+                "0->2 0.1\n"
+                "transition_times:\n"
+                "0 0.0001\n"
+                "1 0.5\n"
+            )
+            (data_dir / "inference_transition_times_200.log").write_text(
+                "ITER 1 LL=-20\nbirth: 1 2\n"
+            )
+
+            runs = load_runs(data_dir, max_count=100)
+
+            self.assertEqual([run.count for run in runs], [2])
+            self.assertFalse(
+                (data_dir / "inference_transition_times_200.tmp.out").exists()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

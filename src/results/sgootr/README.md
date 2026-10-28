@@ -55,6 +55,55 @@ for cohort in S10 S15; do
 done
 ```
 
+## CRC11 manuscript figure
+
+Generate the three-panel S10 CRC11 manuscript figure (transition graph,
+profile summaries, and posterior-MAP colored tree) with:
+
+```bash
+.venv/bin/python -m src.results.sgootr.plot_state_specific_transitions \
+  data/sgootr/all_trees/combined_inference/S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt \
+  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input
+.venv/bin/python -m src.results.sgootr.figure_generator
+```
+
+By default, the figure uses the shared-source two-PT->LN fit
+`S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857`,
+its parameter profile tables and colored tree, plus the fixed-parameter
+transition-time profile from the S10 CRC11 count-2 analysis. The generator
+writes panel A/B/C files and a composite in PNG, PDF, and SVG under
+`data/sgootr/figures/figure_generator/`, along with
+`panel_B_profile_intervals.csv`. The composite places panel A (transition graph)
+and panel C (colored tree with transition-time likelihood profiles) across the
+top, with panel B across one row at the bottom. Panel B shows net-growth and
+relative-birth profile intervals from the saved SGOOTR analysis, alongside the
+two distinct transition matrices in a compact vertical stack: NC→PT, and PT→LN
+(shared by both PT→LN epochs). The inner boxes show the likelihood fraction
+`exp(-0.25)` and whiskers show `exp(-1)`. Panel A shows transition structure
+without probability values. Panel C draws the state-colored tree from the saved
+segment table and overlays horizontal markers at the fitted event times. The
+fixed-parameter event-time likelihood profiles are line plots with filled
+likelihood areas, using the same vertical time scale as the tree. Panel C also
+includes the jointly optimized likelihood comparison for one through five
+PT→LN events, using
+`S10_CRC11_ptln_transition_count_analysis/likelihood_by_ptln_transition_count.csv`;
+the count comparison is a line plot of log-likelihood relative to the selected
+two-event fit, marked with a star, without fill. The fixed-parameter
+event-time profiles use the complete saved 0.001 time grid. Inference times use
+leaves at zero and the root at `t_max`; the figure's tree coordinate starts at
+zero at the root and increases toward leaves, so plotted event positions use
+`t_plot = t_max - t_inferred`. The profile curves and event guides use this same
+reflected coordinate.
+
+The point estimates shown by the generator come from
+`S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt`.
+Its `birth:` and `death:` vectors give net growth as birth minus death; its
+`transition_matrices_by_epoch:` section supplies both plotted transition
+matrices. The profile tables in the same schedule directory contain the
+likelihood profiles derived from that fit. These are the project's SGOOTR
+inference results for patient CRC11, S10 region; they are not parameter
+estimates copied from the SGOOTR publication.
+
 ## CRC11 genetic transition-schedule search
 
 The runner searches schedules of three distinct transition times on the
