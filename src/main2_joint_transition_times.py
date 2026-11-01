@@ -23,7 +23,12 @@ from src.tree_utils import (
 )
 
 
-def _build_datastructures(trees, transition_times: list[float], num_states: int):
+def _build_datastructures(
+    trees,
+    transition_times: list[float],
+    num_states: int,
+    verbose: bool = False,
+):
     datastructures = []
     for tree in trees:
         root_time = float(tree.nodes[tree.graph["root"]]["T"])
@@ -35,9 +40,54 @@ def _build_datastructures(trees, transition_times: list[float], num_states: int)
                 hierarchy,
                 local_times,
                 num_states,
+                verbose=verbose,
             )
         )
     return datastructures
+
+
+def _project_transition_times_to_grid(
+    values: list[float],
+    max_time: float,
+    min_gap: float,
+    grid_size: int = 1000,
+) -> list[float]:
+    if not isinstance(grid_size, int) or grid_size < 2:
+        raise ValueError("grid_size must be an integer of at least 2")
+    last_grid_index = grid_size - 1
+    count = len(values)
+    if not math.isfinite(max_time) or max_time <= 0:
+        raise ValueError("max_time must be positive and finite")
+    if not math.isfinite(min_gap) or min_gap <= 0:
+        raise ValueError("min_gap must be positive and finite")
+    if count == 0 or count > last_grid_index:
+        raise ValueError(
+            f"Schedule size must be between 1 and {last_grid_index}"
+        )
+    if any(not math.isfinite(float(value)) for value in values):
+        raise ValueError("Transition times must be finite")
+
+    min_gap_steps = max(1, math.ceil(min_gap * grid_size / max_time))
+    if 1 + (count - 1) * min_gap_steps > last_grid_index:
+        raise ValueError("Schedule size and minimum gap do not fit the grid")
+
+    indices = sorted(
+        min(
+            max(round(float(value) * grid_size / max_time), 1),
+            last_grid_index,
+        )
+        for value in values
+    )
+    for index in range(count):
+        lower = 1 + index * min_gap_steps
+        upper = last_grid_index - (count - index - 1) * min_gap_steps
+        indices[index] = min(max(indices[index], lower), upper)
+    for index in range(1, count):
+        indices[index] = max(indices[index], indices[index - 1] + min_gap_steps)
+    for index in range(count - 2, -1, -1):
+        indices[index] = min(indices[index], indices[index + 1] - min_gap_steps)
+
+    return [max_time * index / grid_size for index in indices]
 
 
 def coordinate_search_transition_times(
@@ -94,6 +144,7 @@ def _fixed_parameter_likelihood(
     result,
     device: torch.device,
     normalize_root_likelihood: bool,
+    verbose: bool = False,
 ) -> float:
     initial_parameters = {}
     if result is not None:
@@ -114,7 +165,9 @@ def _fixed_parameter_likelihood(
         device=device,
         **initial_parameters,
     ).to(device)
-    datastructures = _build_datastructures(trees, transition_times, num_states)
+    datastructures = _build_datastructures(
+        trees, transition_times, num_states, verbose=verbose
+    )
     with torch.no_grad():
         likelihood = calculate_total_log_likelihood(
             params=params,
@@ -136,24 +189,30 @@ def _find_finite_initial_schedule(
     normalize_root_likelihood: bool,
     random_seed: int,
     max_attempts: int,
+    verbose: bool = False,
 ) -> list[float]:
     generator = random.Random(random_seed)
-    initial = [
-        max_time * index / (num_transition_times + 1)
-        for index in range(1, num_transition_times + 1)
-    ]
-    schedules = [initial]
+    if num_transition_times > 999:
+        raise ValueError("At most 999 transition times fit on the grid")
     min_gap = max_time * 1e-8
+    initial = _project_transition_times_to_grid(
+        [
+            max_time * index / (num_transition_times + 1)
+            for index in range(1, num_transition_times + 1)
+        ],
+        max_time,
+        min_gap,
+    )
+    schedules = [initial]
     for _ in range(max_attempts):
-        candidate = sorted(
-            generator.uniform(min_gap, max_time - min_gap)
-            for _ in range(num_transition_times)
+        candidate = _project_transition_times_to_grid(
+            [
+                max_time * index / 1000
+                for index in generator.sample(range(1, 1000), num_transition_times)
+            ],
+            max_time,
+            min_gap,
         )
-        if any(
-            right - left <= min_gap
-            for left, right in zip(candidate, candidate[1:])
-        ):
-            continue
         schedules.append(candidate)
 
     for candidate in schedules:
@@ -165,6 +224,7 @@ def _find_finite_initial_schedule(
             result=None,
             device=device,
             normalize_root_likelihood=normalize_root_likelihood,
+            verbose=verbose,
         )
         if math.isfinite(likelihood):
             return candidate
@@ -190,6 +250,7 @@ def optimize_joint_transition_times(
     logfile: str | None = None,
     random_seed: int = 20261025,
     initialization_attempts: int = 100,
+    verbose: bool = False,
 ):
     if num_transition_times <= 0:
         raise ValueError("num_transition_times must be positive")
@@ -210,13 +271,16 @@ def optimize_joint_transition_times(
         normalize_root_likelihood=normalize_root_likelihood,
         random_seed=random_seed,
         max_attempts=initialization_attempts,
+        verbose=verbose,
     )
     print(f"INITIAL_TRANSITION_TIMES={transition_times}", flush=True)
     step_size = max_time / (2 * (num_transition_times + 1))
     result = None
 
     for search_round in range(search_rounds):
-        datastructures = _build_datastructures(trees, transition_times, num_states)
+        datastructures = _build_datastructures(
+            trees, transition_times, num_states, verbose=verbose
+        )
         result = optimize_parameters(
             trees=trees,
             datastructure=datastructures,
@@ -257,6 +321,7 @@ def optimize_joint_transition_times(
                 result,
                 device,
                 normalize_root_likelihood,
+                verbose,
             )
 
         transition_times, likelihood = coordinate_search_transition_times(
@@ -272,7 +337,9 @@ def optimize_joint_transition_times(
         )
         step_size /= 2
 
-    datastructures = _build_datastructures(trees, transition_times, num_states)
+    datastructures = _build_datastructures(
+        trees, transition_times, num_states, verbose=verbose
+    )
     result = optimize_parameters(
         trees=trees,
         datastructure=datastructures,
@@ -322,6 +389,11 @@ def main() -> None:
     parser.add_argument("--search-rounds", type=int, default=3)
     parser.add_argument("--random-seed", type=int, default=20261025)
     parser.add_argument("--initialization-attempts", type=int, default=100)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed cut-tree likelihood data structures.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--optimizer", choices=("adam", "lbfgs"), default="adam")
@@ -351,6 +423,7 @@ def main() -> None:
         logfile=str(args.log),
         random_seed=args.random_seed,
         initialization_attempts=args.initialization_attempts,
+        verbose=args.verbose,
     )
     write_result(str(args.output), result, args.num_states)
     print(f"Results written to {args.output}")

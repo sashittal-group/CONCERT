@@ -117,6 +117,12 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed cut-tree likelihood data structures.",
+    )
+
+    parser.add_argument(
         "--no-stem",
         action="store_true",
         help=(
@@ -984,6 +990,7 @@ def main(normalize_root_likelihood: bool | None = None):
                     local_transition_times,
                     num_states,
                     per_edge_transition_data=per_edge_transition_data.get(tree_index),
+                    verbose=args.verbose,
                 )
             )
 

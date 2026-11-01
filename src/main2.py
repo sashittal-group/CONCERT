@@ -107,6 +107,12 @@ def parse_args(require_initial_parameters: bool = False):
     )
 
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed cut-tree likelihood data structures.",
+    )
+
+    parser.add_argument(
         "--shared-sampling-rate",
         action="store_true",
         help="Use one learned sampling probability shared by all states.",
@@ -659,6 +665,7 @@ def main(
                 hierarchy,
                 local_transition_times,
                 num_states,
+                verbose=args.verbose,
             )
             for (levels, hierarchy), local_transition_times in zip(
                 cut_trees, tree_transition_times

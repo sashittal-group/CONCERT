@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 
 STATES = ("A", "B", "C", "D")
-SAMPLE_SIZES = (4, 8)
+SAMPLE_SIZES = (4, 8, 32)
 NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 TRANSITION_LINE = re.compile(
     rf"(\d+)->(\d+)\s+({NUMBER})"
@@ -31,10 +31,13 @@ TRANSITION_TIME_PARAMETERS = [
     (f"Transition time {index}", f"transition_time_{index}")
     for index in range(1, 6)
 ]
-IDENTIFIABLE_PARAMETERS = [
+IDENTIFIABLE_PARAMETER_BASE = [
     *((f"Net growth {state}", f"net_growth_{state}") for state in STATES),
     *((f"Scaled sampling {state}", f"scaled_sampling_{state}") for state in STATES),
     *((f"Transition probability A→{state}", f"p_A_to_{state}") for state in STATES),
+]
+IDENTIFIABLE_PARAMETERS = [
+    *IDENTIFIABLE_PARAMETER_BASE,
     *TRANSITION_TIME_PARAMETERS,
 ]
 
@@ -114,6 +117,11 @@ def _parse_output(path: Path) -> dict[str, float]:
             raise ValueError(f"Invalid transition probability in {path}: {stripped}")
         transitions[key] = value
 
+    transition_times = {
+        f"transition_time_{index}": value
+        for index, value in enumerate(sorted(transition_times.values()), start=1)
+    }
+
     required_transitions = {(0, target) for target in range(len(STATES))}
     if not found_transitions or not required_transitions.issubset(transitions):
         raise ValueError(f"Missing root transition probabilities in {path}")
@@ -140,7 +148,14 @@ def _parse_output(path: Path) -> dict[str, float]:
     return estimates
 
 
-def _read_ground_truth(path: Path) -> dict[str, dict[str, float]]:
+def _read_ground_truth(
+    path: Path,
+    num_transition_times: int = 5,
+) -> dict[str, dict[str, float]]:
+    transition_time_columns = [
+        f"transition_time_{index}"
+        for index in range(1, num_transition_times + 1)
+    ]
     with path.open(newline="") as source:
         reader = csv.DictReader(source)
         required_columns = {
@@ -149,7 +164,7 @@ def _read_ground_truth(path: Path) -> dict[str, dict[str, float]]:
             *(f"death_{state}" for state in STATES),
             "sampling_rate",
             *(f"p_A_to_{state}" for state in STATES),
-            *(f"transition_time_{index}" for index in range(1, 6)),
+            *transition_time_columns,
         }
         if reader.fieldnames is None or not required_columns.issubset(reader.fieldnames):
             raise ValueError(f"Missing ground-truth columns in {path}")
@@ -172,8 +187,8 @@ def _read_ground_truth(path: Path) -> dict[str, dict[str, float]]:
                     f"transition_time_{index}": time
                     for index, time in enumerate(
                         sorted(
-                            1.0 - float(row[f"transition_time_{index}"])
-                            for index in range(1, 6)
+                            1.0 - float(row[column])
+                            for column in transition_time_columns
                         ),
                         start=1,
                     )
@@ -248,6 +263,62 @@ def load_completed_comparisons(
                 )
             )
 
+    return comparisons
+
+
+def load_completed_progressive_comparisons(
+    data_dir: Path,
+    num_transition_times: int,
+) -> list[Comparison]:
+    ground_truth = _read_ground_truth(
+        data_dir / "generated_settings.csv",
+        num_transition_times=num_transition_times,
+    )
+    ground_truth = {
+        setting: _add_identifiable_parameters(values)
+        for setting, values in ground_truth.items()
+    }
+    comparisons = []
+    for path in sorted(
+        data_dir.glob(
+            "setting_*/batch_*/inference_progressive_joint_first_8_trees.out"
+        )
+    ):
+        setting = path.parent.parent.name
+        if setting not in ground_truth:
+            warnings.warn(
+                f"Skipping {path}: no ground-truth row for {setting}",
+                stacklevel=2,
+            )
+            continue
+        try:
+            estimates = _parse_output(path)
+            estimated_times = [
+                key
+                for key in estimates
+                if key.startswith("transition_time_")
+            ]
+            if len(estimated_times) != num_transition_times:
+                raise ValueError(
+                    f"Expected {num_transition_times} estimated transition times "
+                    f"in {path}; found {len(estimated_times)}"
+                )
+        except (OSError, ValueError) as error:
+            warnings.warn(
+                f"Skipping incomplete inference output {path}: {error}",
+                stacklevel=2,
+            )
+            continue
+        comparisons.append(
+            Comparison(
+                sample_size=8,
+                setting=setting,
+                batch=path.parent.name,
+                truth=ground_truth[setting],
+                inferred=_add_identifiable_parameters(estimates),
+                source=path,
+            )
+        )
     return comparisons
 
 
@@ -373,6 +444,44 @@ def plot_completed_inferences(data_dir: Path, output_dir: Path) -> list[Path]:
     return outputs
 
 
+def plot_completed_progressive_inferences(
+    data_dir: Path,
+    output_dir: Path,
+    num_transition_times: int,
+) -> Path:
+    comparisons = load_completed_progressive_comparisons(
+        data_dir,
+        num_transition_times=num_transition_times,
+    )
+    if not comparisons:
+        raise FileNotFoundError(
+            f"No complete progressive inference outputs found in {data_dir}"
+        )
+    output_path = output_dir / (
+        f"progressive_joint_{num_transition_times}_transition_"
+        "identifiable_parameters_first_8_trees.png"
+    )
+    parameters = [
+        *IDENTIFIABLE_PARAMETER_BASE,
+        *(
+            (f"Transition time {index}", f"transition_time_{index}")
+            for index in range(1, num_transition_times + 1)
+        ),
+    ]
+    _plot_parameters(
+        comparisons,
+        sample_size=8,
+        output_path=output_path,
+        parameters=parameters,
+        title=(
+            f"Progressive {num_transition_times}-transition identifiable "
+            "parameters vs. ground truth"
+        ),
+    )
+    print(f"Plotted {len(comparisons)} completed runs to {output_path}")
+    return output_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot completed star-model inferences against ground truth."
@@ -388,9 +497,23 @@ def main() -> None:
         default=None,
         help="Defaults to <data-dir>/plots.",
     )
+    parser.add_argument(
+        "--progressive-transition-times",
+        type=int,
+        choices=(2, 3),
+        default=None,
+        help="Plot completed progressive inferences with this many transition times.",
+    )
     args = parser.parse_args()
     output_dir = args.output_dir or args.data_dir / "plots"
-    plot_completed_inferences(args.data_dir, output_dir)
+    if args.progressive_transition_times is None:
+        plot_completed_inferences(args.data_dir, output_dir)
+    else:
+        plot_completed_progressive_inferences(
+            args.data_dir,
+            output_dir,
+            num_transition_times=args.progressive_transition_times,
+        )
 
 
 if __name__ == "__main__":

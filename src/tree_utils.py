@@ -633,6 +633,7 @@ def get_datastructure_for_likelihood_calculation(
     per_edge_transition_data: dict[
         tuple[int, int], list[tuple[int, int, float]]
     ] | None = None,
+    verbose: bool = False,
 ):
     level_ds = []
 
@@ -751,6 +752,7 @@ def get_datastructure_for_likelihood_calculation(
 
         level_ds[i]["transition_matrix"] = torch.as_tensor(transition_matrix)
 
-    print(level_ds)
+    if verbose:
+        print(level_ds)
     
     return level_ds

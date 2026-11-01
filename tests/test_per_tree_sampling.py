@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import tempfile
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 from pathlib import Path
 import unittest
@@ -128,6 +130,38 @@ class PerTreeSamplingTests(unittest.TestCase):
             3,
         )
         return [tree, tree.copy()], [data, data]
+
+    def test_datastructure_matrices_print_only_when_verbose(self) -> None:
+        tree = prepare_nx_tree(
+            [
+                Node(0, 0.5, False, -1),
+                Node(1, 0.0, True, 0),
+                Node(2, 0.0, True, 1),
+            ],
+            [Edge(0, 1, 0.5), Edge(0, 2, 0.5)],
+        )
+        levels, hierarchy = cut_tree(tree, [0.25])
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            get_datastructure_for_likelihood_calculation(
+                levels,
+                hierarchy,
+                [0.25],
+                3,
+            )
+        self.assertEqual(captured.getvalue(), "")
+
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            get_datastructure_for_likelihood_calculation(
+                levels,
+                hierarchy,
+                [0.25],
+                3,
+                verbose=True,
+            )
+        self.assertIn("edge_matrix", captured.getvalue())
 
     def test_sampling_is_state_shared_across_trees_without_flag(self) -> None:
         parameters = self._parameters([0.3, 0.4, 0.5], per_tree=False)
