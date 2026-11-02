@@ -1,0 +1,27 @@
+{
+  "dataset": "KPTracer",
+  "inference_file": "/Users/samin/workspace/phylodynamic-carta/mach2/results/kptracer_mach2_20261101_1403/carta_mach2_pairwise_min.out",
+  "input_directory": "/Users/samin/workspace/phylodynamic-carta/data/KPTracer-Data/processed_data",
+  "fit_transition_time_count": 21,
+  "saved_fit_log_likelihood": 205.5322029163921,
+  "recomputed_root_normalized_log_likelihood": 205.53211383467703,
+  "recomputed_minus_saved_log_likelihood": -8.908171506050166e-05,
+  "posterior_root_log_likelihood": 205.53211383467703,
+  "state_names": [
+    "T1",
+    "L1",
+    "L2",
+    "L3",
+    "S1"
+  ],
+  "segment_count": 22823,
+  "source_edge_count": 2920,
+  "mean_most_likely_state_probability": 0.9052555916530863,
+  "most_likely_segment_counts": {
+    "T1": 17670,
+    "S1": 2040,
+    "L2": 1783,
+    "L3": 1279,
+    "L1": 51
+  }
+}

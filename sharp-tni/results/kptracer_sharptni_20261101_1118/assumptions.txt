@@ -1,0 +1,6 @@
+SharpTNI exploratory KPTracer run
+Hosts: inferred location states T1, L1, L2, L3, and S1.
+Entry/removal times: [0,1] for all states; no per-location epidemiological intervals are available in these inputs.
+Tree: normalized nodes_0.csv times reversed and scaled to [0,1], with tips at time 1.
+Leaf labels: 1461.labeling; internal labels: 0-T-0.location.labeling.
+Interpretation: exploratory state-transition analysis, not a validated host-to-host infection model.

@@ -1,0 +1,76 @@
+{
+  "dataset": "KPTracer",
+  "inference_file": "mach2/results/kptracer_mach2_20261101_1403/concert_initialized/carta_concert_init_global_min_11.out",
+  "input_directory": "data/KPTracer-Data/processed_data",
+  "transition_time_count": 11,
+  "fit_log_likelihood": 136.76869674325732,
+  "recomputed_root_normalized_log_likelihood": 136.768696743245,
+  "recomputed_minus_fit_log_likelihood": -1.233502189279534e-11,
+  "subtree_count": 1,
+  "edge_segment_count": 12072,
+  "state_names": [
+    "T1",
+    "L1",
+    "L2",
+    "L3",
+    "S1"
+  ],
+  "birth_rates": [
+    10.3940559716155,
+    2.3927446328255e-09,
+    121.106082233461,
+    6.20365757518146,
+    9.30854848840891
+  ],
+  "death_rates": [
+    7.28480033386695,
+    2.24901714295707e-09,
+    104.304346836042,
+    2.31103271119215e-10,
+    3.71907730073518e-11
+  ],
+  "sampling_probabilities": [
+    0.05,
+    0.05,
+    0.05,
+    0.05,
+    0.05
+  ],
+  "transition_probabilities": [
+    [
+      0.948839426702353,
+      0.00312873452457664,
+      0.0463155818774928,
+      0.00120927551764884,
+      0.00050698137792863
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.946654654824287,
+      0.0,
+      0.0533453451757133,
+      0.0,
+      0.0
+    ],
+    [
+      0.0143426215106865,
+      0.0,
+      0.0,
+      0.985657378489313,
+      0.0
+    ],
+    [
+      0.0354207924156951,
+      0.0,
+      2.71156982526488e-09,
+      0.0,
+      0.964579204872735
+    ]
+  ]
+}

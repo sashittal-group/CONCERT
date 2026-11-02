@@ -393,7 +393,7 @@ def write_result(
 
         for k, t in enumerate(transition_times):
 
-            out.write(f"{k} {t:.15g}\n")
+            out.write(f"{k} {t:.17g}\n")
 
         out.write("\n")
 

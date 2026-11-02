@@ -216,14 +216,21 @@ def calculate_log_likelihood(
                 log_probabilities.unsqueeze(0) + previous_ll.unsqueeze(1),
                 dim=-1,
             )
-            level_ll += transition_matrix @ child_messages
+            connected_children = transition_matrix.unsqueeze(-1) != 0
+            masked_child_messages = torch.where(
+                connected_children,
+                child_messages.unsqueeze(0),
+                torch.zeros_like(child_messages.unsqueeze(0)),
+            )
+            level_ll += (
+                transition_matrix.unsqueeze(-1) * masked_child_messages
+            ).sum(dim=1)
 
         level_lls.append(level_ll)
 
         previous_ll = level_ll
     
     return level_ll
-
 
 
 

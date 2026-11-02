@@ -3,12 +3,17 @@ configfile: "src/results/sgootr/config.yaml"
 configfile: "src/results/kptracer/config.yaml"
 
 from pathlib import Path
+import csv
 import os
 import sys
 import zlib
 import yaml
 from src.generate_coord_settings import SAMPLING_RATE, TRANSITION_TIME
 from src.generate_beam_barcodes import read_tree
+from src.results.kptracer.grouped_transition_schedules import (
+    load_grouped_transition_schedules,
+    read_fit_log_likelihood,
+)
 
 python_executable = sys.executable
 
@@ -229,6 +234,103 @@ def star_transition_tree_edge_inputs(num_transition_times):
         tree=star_tree_indices,
     )
 kptracer_root = "data/KPTracer-Data/processed_data"
+kptracer_sharptni_cotransmission_run_directory = Path(
+    config.get(
+        "kptracer_sharptni_cotransmission_run_directory",
+        "sharp-tni/results/kptracer_sharptni_20261101_1118",
+    )
+).resolve()
+kptracer_sharptni_cotransmission_max_steps = int(
+    config.get("kptracer_sharptni_cotransmission_max_steps", 50000)
+)
+kptracer_sharptni_cotransmission_patience = int(
+    config.get("kptracer_sharptni_cotransmission_patience", 500)
+)
+kptracer_grouped_transition_schedules_directory = (
+    kptracer_sharptni_cotransmission_run_directory / "enumerated_solutions"
+)
+kptracer_grouped_transition_schedule_tables = [
+    str(
+        kptracer_grouped_transition_schedules_directory
+        / f"gamma{gamma}_mixed_direction_transition_times.tsv"
+    )
+    for gamma in (21, 22)
+]
+kptracer_grouped_transition_schedules = load_grouped_transition_schedules(
+    kptracer_grouped_transition_schedule_tables
+)
+kptracer_grouped_transition_schedule_ids = list(
+    kptracer_grouped_transition_schedules
+)
+kptracer_grouped_transition_fits_directory = Path(
+    config.get(
+        "kptracer_grouped_transition_fits_directory",
+        kptracer_sharptni_cotransmission_run_directory
+        / "concert_initialized"
+        / "grouped_schedule_fits",
+    )
+).resolve()
+kptracer_grouped_transition_initial_parameters = str(
+    Path(
+        config.get(
+            "kptracer_grouped_transition_initial_parameters",
+            f"{kptracer_root}/inference_progressive_fixed_sampling_0.05_5_20_regenerated_grid_100/transition_count_10.out",
+        )
+    ).resolve()
+)
+kptracer_grouped_transition_max_steps = int(
+    config.get("kptracer_grouped_transition_max_steps", 50000)
+)
+kptracer_grouped_transition_patience = int(
+    config.get("kptracer_grouped_transition_patience", 500)
+)
+kptracer_grouped_transition_sampling_probability = float(
+    config.get("kptracer_grouped_transition_sampling_probability", 0.05)
+)
+kptracer_grouped_transition_fit_outputs = [
+    str(
+        kptracer_grouped_transition_fits_directory
+        / "fits"
+        / f"{schedule_id}.out"
+    )
+    for schedule_id in kptracer_grouped_transition_schedule_ids
+]
+kptracer_grouped_transition_fit_summary = str(
+    kptracer_grouped_transition_fits_directory / "fit_summary.tsv"
+)
+kptracer_progressive_grid_sizes = (100, 200, 500, 1000)
+kptracer_progressive_stage_prefix = (
+    "inference_progressive_fixed_sampling_0.05_20"
+)
+kptracer_progressive_outputs = [
+    f"{kptracer_root}/{kptracer_progressive_stage_prefix}_grid_{grid_size}.{suffix}"
+    for grid_size in kptracer_progressive_grid_sizes
+    for suffix in ("out", "txt")
+]
+kptracer_progressive_checkpoint_outputs = [
+    f"{kptracer_root}/{kptracer_progressive_stage_prefix}_grid_{grid_size}/"
+    f"transition_count_{count}{suffix}"
+    for grid_size in kptracer_progressive_grid_sizes
+    for count in range(10, 21)
+    for suffix in (".out", "_times.txt")
+]
+kptracer_progressive_outputs.extend(kptracer_progressive_checkpoint_outputs)
+kptracer_progressive_optimizer_logs = [
+    f"{kptracer_root}/{kptracer_progressive_stage_prefix}_grid_{grid_size}.log"
+    for grid_size in kptracer_progressive_grid_sizes
+]
+kptracer_progressive_optimizer_logs.extend(
+    f"{kptracer_root}/{kptracer_progressive_stage_prefix}_grid_{grid_size}/"
+    f"transition_count_{count}.log"
+    for grid_size in kptracer_progressive_grid_sizes
+    for count in range(10, 20)
+)
+kptracer_progressive_stdout = (
+    f"{kptracer_root}/{kptracer_progressive_stage_prefix}.stdout.log"
+)
+kptracer_progressive_stderr = (
+    f"{kptracer_root}/{kptracer_progressive_stage_prefix}.stderr.log"
+)
 tls_root = "data/troupe/TLS"
 tls_tree_root = f"{tls_root}/subtrees_kept_states"
 tls_nodes_files = sorted(Path(tls_tree_root).rglob("nodes.csv"))
@@ -3121,6 +3223,274 @@ rule infer_kptracer:
         "--device cpu --optimizer adam --normalize-root-likelihood "
         "--shared-sampling-rate "
         "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_kptracer_sharptni_cotransmission:
+    input:
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transition_edges="src/transition_edges_kptracer.txt",
+        transition_times=str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "cotransmission_times_from_sharptni.txt"
+        ),
+        initial_parameters=str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "carta_sharptni_fixed_times.out"
+        ),
+        code=[
+            "src/main2.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/closed_form_given_transitions.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+            "src/dtos.py",
+        ],
+    output:
+        out=str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "carta_sharptni_cotransmission_times.out"
+        ),
+    params:
+        tree_directory=kptracer_root,
+        num_trees=1,
+        num_states=5,
+        sampling_probability=0.05,
+        max_steps=kptracer_sharptni_cotransmission_max_steps,
+        patience=kptracer_sharptni_cotransmission_patience,
+        python=sys.executable,
+    log:
+        optimization=str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "carta_sharptni_cotransmission_times.log"
+        ),
+        stdout=str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "carta_sharptni_cotransmission_times.stdout.log"
+        ),
+        stderr=str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "carta_sharptni_cotransmission_times.stderr.log"
+        ),
+    benchmark:
+        str(
+            kptracer_sharptni_cotransmission_run_directory
+            / "carta_sharptni_cotransmission_times.benchmark"
+        ),
+    shell:
+        "set -euo pipefail && "
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=/usr/lib && "
+        "{params.python:q} -c 'import runpy, sys, torch._inductor.config as config; "
+        "config.cpp_cache_precompile_headers = False; "
+        "sys.argv = [\"src.main2\", *sys.argv[1:]]; "
+        "runpy.run_module(\"src.main2\", run_name=\"__main__\")' "
+        "{params.tree_directory:q} "
+        "--num-states {params.num_states} --num-trees {params.num_trees} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--transition-times-file {input.transition_times:q} "
+        "--initial-parameters {input.initial_parameters:q} "
+        "--fixed-shared-sampling-probability "
+        "{params.sampling_probability} "
+        "--max-steps {params.max_steps} --patience {params.patience} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_kptracer_grouped_transition_schedule:
+    input:
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transition_edges="src/transition_edges_kptracer.txt",
+        schedule_tables=kptracer_grouped_transition_schedule_tables,
+        initial_parameters=kptracer_grouped_transition_initial_parameters,
+        code=[
+            "sharp-tni/run_grouped_transition_inference.py",
+            "src/results/kptracer/grouped_transition_schedules.py",
+            "src/main2.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/closed_form_given_transitions.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+            "src/dtos.py",
+        ],
+    output:
+        out=str(
+            kptracer_grouped_transition_fits_directory
+            / "fits"
+            / "{schedule_id}.out"
+        ),
+    params:
+        tree_directory=kptracer_root,
+        sampling_probability=kptracer_grouped_transition_sampling_probability,
+        max_steps=kptracer_grouped_transition_max_steps,
+        patience=kptracer_grouped_transition_patience,
+        python=sys.executable,
+    threads: 1
+    log:
+        optimization=str(
+            kptracer_grouped_transition_fits_directory
+            / "logs"
+            / "{schedule_id}.log"
+        ),
+        stdout=str(
+            kptracer_grouped_transition_fits_directory
+            / "logs"
+            / "{schedule_id}.stdout.log"
+        ),
+        stderr=str(
+            kptracer_grouped_transition_fits_directory
+            / "logs"
+            / "{schedule_id}.stderr.log"
+        ),
+    benchmark:
+        str(
+            kptracer_grouped_transition_fits_directory
+            / "benchmarks"
+            / "{schedule_id}.benchmark"
+        ),
+    shell:
+        "set -euo pipefail && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=\"/opt/homebrew/opt/llvm/lib/c++\" && "
+        "{params.python:q} sharp-tni/run_grouped_transition_inference.py "
+        "--schedule-id {wildcards.schedule_id:q} "
+        "--schedule-tables {input.schedule_tables:q} "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--tree-directory {params.tree_directory:q} "
+        "--initial-parameters {input.initial_parameters:q} "
+        "--sampling-probability {params.sampling_probability} "
+        "--max-steps {params.max_steps} --patience {params.patience} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_kptracer_grouped_transition_schedules:
+    input:
+        fits=kptracer_grouped_transition_fit_outputs,
+    output:
+        summary=kptracer_grouped_transition_fit_summary,
+    run:
+        output_path = Path(output.summary)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = (
+            "schedule_id",
+            "transition_count",
+            "source_gamma_solution_pairs",
+            "transition_times_carta",
+            "transition_times_sharptni",
+            "log_likelihood",
+            "fit_output",
+        )
+        with output_path.open("w", newline="") as summary_file:
+            writer = csv.DictWriter(
+                summary_file,
+                fieldnames=fieldnames,
+                delimiter="\t",
+                lineterminator="\n",
+            )
+            writer.writeheader()
+            for schedule_id, fit_path in zip(
+                kptracer_grouped_transition_schedule_ids,
+                input.fits,
+                strict=True,
+            ):
+                schedule = kptracer_grouped_transition_schedules[schedule_id]
+                times = schedule.transition_times
+                writer.writerow(
+                    {
+                        "schedule_id": schedule_id,
+                        "transition_count": len(times),
+                        "source_gamma_solution_pairs": ";".join(
+                            f"{gamma}:{solution_index}"
+                            for gamma, solution_index in sorted(
+                                schedule.source_solutions
+                            )
+                        ),
+                        "transition_times_carta": ";".join(
+                            f"{time:.12g}" for time in times
+                        ),
+                        "transition_times_sharptni": ";".join(
+                            f"{1.0 - time:.12g}" for time in times
+                        ),
+                        "log_likelihood": f"{read_fit_log_likelihood(fit_path):.15g}",
+                        "fit_output": fit_path,
+                    }
+                )
+
+
+rule infer_kptracer_progressive:
+    input:
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        initial_transition_times=f"{kptracer_root}/transition-times.txt",
+        transition_edges="src/transition_edges_kptracer.txt",
+        code=[
+            "src/progressive_joint_transition_times.py",
+            "src/main2_joint_transition_times.py",
+            "src/main2.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+            "src/dtos.py",
+        ],
+    output:
+        kptracer_progressive_outputs,
+    params:
+        tree_directory=kptracer_root,
+        stage_prefix=kptracer_progressive_stage_prefix,
+        grid_sizes=" ".join(map(str, kptracer_progressive_grid_sizes)),
+        python=sys.executable,
+    log:
+        optimization=kptracer_progressive_optimizer_logs,
+        stdout=kptracer_progressive_stdout,
+        stderr=kptracer_progressive_stderr,
+    benchmark:
+        f"{kptracer_root}/{kptracer_progressive_stage_prefix}.benchmark",
+    shell:
+        "set -euo pipefail && "
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=/usr/lib && "
+        ": > {log.stdout:q} && : > {log.stderr:q} && "
+        "output_root={params.tree_directory:q} && "
+        "initial_times={input.initial_transition_times:q} && "
+        "initial_result='' && "
+        "for grid_size in {params.grid_sizes}; do "
+        "stage={params.stage_prefix}_grid_$grid_size && "
+        "checkpoint_directory=\"$output_root/$stage\" && "
+        "initial_result_args=() && "
+        "if [[ -n \"$initial_result\" ]]; then "
+        "initial_result_args=(--initial-result-file \"$initial_result\"); "
+        "fi && "
+        "{params.python:q} -m src.progressive_joint_transition_times "
+        "--tree-directory {params.tree_directory:q} "
+        "--num-states 5 --num-trees 1 "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--num-transition-times 20 --fixed-sampling-probability 0.05 "
+        "--initial-transition-times-file \"$initial_times\" "
+        "--initial-transition-count 10 "
+        "--checkpoint-directory \"$checkpoint_directory\" "
+        "${{initial_result_args[@]}} "
+        "--max-time 1 --grid-size \"$grid_size\" "
+        "--output \"$output_root/$stage.out\" "
+        "--transition-times-output \"$output_root/$stage.txt\" "
+        "--log \"$output_root/$stage.log\" "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        ">> {log.stdout:q} 2>> {log.stderr:q} && "
+        "initial_times=\"$checkpoint_directory/transition_count_10_times.txt\" && "
+        "initial_result=\"$checkpoint_directory/transition_count_10.out\"; "
+        "done"
 
 
 rule infer_kptracer_per_edge:

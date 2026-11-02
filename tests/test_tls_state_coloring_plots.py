@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 import pandas as pd
 
 from src.results.cell_state_colors import CELL_STATE_COLORS
@@ -81,9 +82,25 @@ class TlsStateColoringPlotTests(unittest.TestCase):
             self.assertTrue((output_dir / "tree_001/subtree_001.png").is_file())
             axis = created["axis"]
             self.assertEqual(len(axis.lines), 4)
+            self.assertEqual(len(axis.collections), 2)
             self.assertEqual(axis.lines[0].get_color(), CELL_STATE_COLORS["NMPs"])
             self.assertEqual(
                 axis.lines[2].get_color(), CELL_STATE_COLORS["NeuralTube"]
+            )
+            leaf_markers = axis.collections[1]
+            self.assertEqual(len(leaf_markers.get_offsets()), 2)
+            self.assertTrue(
+                (
+                    leaf_markers.get_sizes()
+                    > axis.collections[0].get_sizes()[0]
+                ).all()
+            )
+            self.assertEqual(
+                [tuple(color) for color in leaf_markers.get_facecolors()],
+                [
+                    to_rgba(CELL_STATE_COLORS["NMPs"]),
+                    to_rgba(CELL_STATE_COLORS["NeuralTube"]),
+                ],
             )
             self.assertEqual(list(axis.lines[0].get_ydata()), [0.0, 0.0])
             self.assertEqual(list(axis.lines[1].get_ydata()), [0.0, -0.1])

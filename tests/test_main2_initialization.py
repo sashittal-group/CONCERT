@@ -4,7 +4,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import torch
+
 from src.main2 import read_initial_parameters
+from src.mle_closed_form2 import PhylodynamicParameters
 
 
 class Main2InitializationTests(unittest.TestCase):
@@ -60,6 +63,32 @@ class Main2InitializationTests(unittest.TestCase):
                     num_states=3,
                     free_edges=[(0, 1), (0, 2)],
                 )
+
+    def test_preserves_small_initial_birth_and_death_rates(self) -> None:
+        expected_birth = torch.tensor([9.82136090221631e-8])
+        expected_death = torch.tensor([4.00373276624008e-8])
+        params = PhylodynamicParameters(
+            num_states=1,
+            free_edges=[],
+            given_transition_times=[0.5],
+            device=torch.device("cpu"),
+            initial_birth_rates=expected_birth.tolist(),
+            initial_death_rates=expected_death.tolist(),
+            given_sampling_probabilities=[0.05],
+        )
+
+        torch.testing.assert_close(
+            params.birth_rates,
+            expected_birth,
+            rtol=1e-5,
+            atol=1e-12,
+        )
+        torch.testing.assert_close(
+            params.death_rates,
+            expected_death,
+            rtol=1e-5,
+            atol=1e-12,
+        )
 
 
 if __name__ == "__main__":

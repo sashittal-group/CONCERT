@@ -110,11 +110,15 @@ def inverse_sigmoid(
     x: torch.Tensor,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-
+    lower_bound = max(eps, torch.finfo(x.dtype).tiny)
+    upper_bound = min(
+        1.0 - eps,
+        1.0 - torch.finfo(x.dtype).eps,
+    )
     x = torch.clamp(
         x,
-        eps,
-        1.0 - eps,
+        lower_bound,
+        upper_bound,
     )
 
     return torch.log(x / (1.0 - x))
@@ -214,10 +218,15 @@ class PhylodynamicParameters(nn.Module):
             death_fraction = initial_death / max_death_rate
             death_fraction = torch.clamp(
                 death_fraction,
-                1e-8,
+                torch.finfo(death_fraction.dtype).tiny,
                 1.0 - 1e-8,
             )
-            self.death_raw = nn.Parameter(inverse_sigmoid(death_fraction))
+            self.death_raw = nn.Parameter(
+                inverse_sigmoid(
+                    death_fraction,
+                    eps=torch.finfo(death_fraction.dtype).tiny,
+                )
+            )
         else:
             self.register_buffer("fixed_death_rates", initial_death.clone())
 
@@ -235,11 +244,16 @@ class PhylodynamicParameters(nn.Module):
 
         birth_fraction = torch.clamp(
             birth_fraction,
-            1e-8,
+            torch.finfo(birth_fraction.dtype).tiny,
             1.0 - 1e-8,
         )
 
-        self.birth_raw = nn.Parameter(inverse_sigmoid(birth_fraction))
+        self.birth_raw = nn.Parameter(
+            inverse_sigmoid(
+                birth_fraction,
+                eps=torch.finfo(birth_fraction.dtype).tiny,
+            )
+        )
 
         # ====================================================
         # SAMPLING PROBABILITIES

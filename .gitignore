@@ -15,4 +15,5 @@ __pycache__/
 
 
 torchinductor_samin/
-dump/
+dump/sharp-tni/results/kptracer_sharptni_20261101_1118/enumerated_solutions/sankoff_solutions_sorted_by_cotransmission.ptree.gz
+sharp-tni/results/*/enumerated_solutions/

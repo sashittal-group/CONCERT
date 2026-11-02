@@ -144,6 +144,7 @@ def _fixed_parameter_likelihood(
     result,
     device: torch.device,
     normalize_root_likelihood: bool,
+    fixed_sampling_probability: float | None = None,
     verbose: bool = False,
 ) -> float:
     initial_parameters = {}
@@ -158,11 +159,18 @@ def _fixed_parameter_likelihood(
                 result.transition_probabilities.detach().cpu().tolist()
             ),
         }
+        if fixed_sampling_probability is not None:
+            initial_parameters.pop("initial_sampling_probabilities")
     params = PhylodynamicParameters(
         num_states=num_states,
         free_edges=free_edges,
         given_transition_times=transition_times,
         device=device,
+        given_sampling_probabilities=(
+            [fixed_sampling_probability] * num_states
+            if fixed_sampling_probability is not None
+            else None
+        ),
         **initial_parameters,
     ).to(device)
     datastructures = _build_datastructures(
@@ -189,6 +197,7 @@ def _find_finite_initial_schedule(
     normalize_root_likelihood: bool,
     random_seed: int,
     max_attempts: int,
+    fixed_sampling_probability: float | None = None,
     verbose: bool = False,
 ) -> list[float]:
     generator = random.Random(random_seed)
@@ -224,6 +233,7 @@ def _find_finite_initial_schedule(
             result=None,
             device=device,
             normalize_root_likelihood=normalize_root_likelihood,
+            fixed_sampling_probability=fixed_sampling_probability,
             verbose=verbose,
         )
         if math.isfinite(likelihood):

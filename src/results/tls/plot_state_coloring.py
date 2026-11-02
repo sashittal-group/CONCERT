@@ -31,6 +31,7 @@ SEGMENT_COLUMNS = (
     "most_likely_state",
     "most_likely_state_probability",
 )
+LEAF_MARKER_SIZE = 16
 
 
 def _tree_layout(
@@ -118,7 +119,7 @@ def _draw_subtree(
             **row._asdict(),
         )
 
-    x_positions, y_positions, _, max_height = _tree_layout(graph)
+    x_positions, y_positions, leaf_order, max_height = _tree_layout(graph)
     state_colors = CELL_STATE_COLORS if state_colors is None else state_colors
     state_counts = {state: 0 for state in state_names}
     probabilities = []
@@ -151,6 +152,27 @@ def _draw_subtree(
             alpha=0.5,
             zorder=2,
         )
+
+    leaf_colors = []
+    for leaf in leaf_order:
+        incoming_edges = list(graph.in_edges(leaf, data=True))
+        if len(incoming_edges) != 1:
+            raise ValueError(
+                f"Expected one incoming edge for leaf {leaf} in {subtree_name}"
+            )
+        state = str(incoming_edges[0][2]["most_likely_state"])
+        if state not in state_colors:
+            raise ValueError(f"Unknown state label {state!r} in {subtree_name}")
+        leaf_colors.append(state_colors[state])
+    axis.scatter(
+        [x_positions[leaf] for leaf in leaf_order],
+        [y_positions[leaf] for leaf in leaf_order],
+        c=leaf_colors,
+        s=LEAF_MARKER_SIZE,
+        edgecolors="white",
+        linewidths=0.35,
+        zorder=5,
+    )
 
     legend = [
         Line2D(
@@ -186,7 +208,7 @@ def _draw_subtree(
         [f"{time:.{tick_precision}f}" for time in major_ticks],
         fontsize=8 if font_size is None else font_size,
     )
-    axis.set_ylim(-max_height, 0.0)
+    axis.set_ylim(-max_height * 1.02, 0.0)
     axis.set_xticks([])
     axis.spines["top"].set_visible(False)
     axis.spines["right"].set_visible(False)

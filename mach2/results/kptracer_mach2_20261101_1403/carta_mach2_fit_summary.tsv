@@ -1,0 +1,3 @@
+interpretation	state_changing_edges	fixed_times	best_observed_LL	best_seed	best_output	starts_tested	early_stop_step
+global interval minimum	99	11	-238.171622380460832	SharpTNI 23-time fit	carta_mach2_global_min.out	4	1603
+same directed transition	99	21	205.532202916392094	SharpTNI 23-time fit	carta_mach2_pairwise_min.out	1	1220

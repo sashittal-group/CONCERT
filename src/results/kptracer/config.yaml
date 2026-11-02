@@ -76,3 +76,11 @@ kptracer_profiles:
       - growth
       - transition
       - scaled_sampling
+kptracer_sharptni_cotransmission_run_directory: sharp-tni/results/kptracer_sharptni_20261101_1118
+kptracer_sharptni_cotransmission_max_steps: 50000
+kptracer_sharptni_cotransmission_patience: 500
+kptracer_grouped_transition_fits_directory: sharp-tni/results/kptracer_sharptni_20261101_1118/concert_initialized/grouped_schedule_fits
+kptracer_grouped_transition_initial_parameters: data/KPTracer-Data/processed_data/inference_progressive_fixed_sampling_0.05_5_20_regenerated_grid_100/transition_count_10.out
+kptracer_grouped_transition_max_steps: 50000
+kptracer_grouped_transition_patience: 500
+kptracer_grouped_transition_sampling_probability: 0.05

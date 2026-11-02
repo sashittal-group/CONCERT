@@ -1,0 +1,74 @@
+{
+  "dataset": "KPTracer",
+  "inference_file": "/Users/samin/workspace/phylodynamic-carta/sharp-tni/results/kptracer_sharptni_20261101_1118/concert_initialized/grouped_schedule_fits/fits/n11-69ea5f25f4192b0d.out",
+  "input_directory": "/Users/samin/workspace/phylodynamic-carta/data/KPTracer-Data/processed_data",
+  "subtree_count": 1,
+  "edge_segment_count": 12060,
+  "state_names": [
+    "T1",
+    "L1",
+    "L2",
+    "L3",
+    "S1"
+  ],
+  "transition_time_count": 11,
+  "log_likelihood_normalized_at_root": 171.3214367935535,
+  "birth_rates": [
+    11.8176555403895,
+    3.31524671896544e-09,
+    223.324274590907,
+    6.19663378988302,
+    9.26544963116268
+  ],
+  "death_rates": [
+    9.04706586540286,
+    3.13072287625783e-09,
+    211.202156648375,
+    3.41096138457556e-10,
+    4.94778050761131e-11
+  ],
+  "sampling_probabilities": [
+    0.05,
+    0.05,
+    0.05,
+    0.05,
+    0.05
+  ],
+  "transition_probabilities": [
+    [
+      0.924548619051721,
+      0.00270081433004361,
+      0.071345261972369,
+      0.00103275530593482,
+      0.000372549339931786
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.942510684489166,
+      0.0,
+      0.057489315510834,
+      0.0,
+      0.0
+    ],
+    [
+      0.0151935344549592,
+      0.0,
+      0.0,
+      0.984806465545041,
+      0.0
+    ],
+    [
+      0.0345964580331599,
+      0.0,
+      3.21631154989755e-08,
+      0.0,
+      0.965403509803725
+    ]
+  ]
+}
