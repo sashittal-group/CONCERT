@@ -5,6 +5,7 @@ configfile: "src/results/kptracer/config.yaml"
 from pathlib import Path
 import csv
 import os
+import shlex
 import sys
 import zlib
 import yaml
@@ -13,6 +14,12 @@ from src.generate_beam_barcodes import read_tree
 from src.results.kptracer.grouped_transition_schedules import (
     load_grouped_transition_schedules,
     read_fit_log_likelihood,
+)
+from src.coord_diff_top_batches import (
+    LINEAR_TOP_FIFTY_BATCHES,
+    LINEAR_TOP_TWENTY_BATCHES,
+    STAR3_TOP_FIFTY_BATCHES,
+    STAR3_TOP_TWENTY_BATCHES,
 )
 
 python_executable = sys.executable
@@ -197,6 +204,43 @@ star_transition_setting_ids = {
     count: glob_wildcards(f"{root}/setting_{{setting}}/setting.txt").setting
     for count, root in star_transition_roots.items()
 }
+linear_transition_root = f"{setting_root}/linear_A_to_D"
+linear_transition_num_settings = 100
+linear_transition_setting_ids = range(
+    1,
+    linear_transition_num_settings + 1,
+)
+first_eight_tree_indices = range(8)
+linear_transition_first8_tree_indices = first_eight_tree_indices
+mach2_simulation_roots = {
+    "star_3": star_transition_roots[3],
+    "linear_A_to_D": linear_transition_root,
+}
+mach2_timelimit = 1800
+mach2_executable = config.get("mach2_executable") or os.environ.get(
+    "MACH2_EXECUTABLE"
+)
+mach2_executable_arg = (
+    f"--mach2-executable {shlex.quote(str(mach2_executable))}"
+    if mach2_executable
+    else ""
+)
+def mach2_full_outputs(data_root):
+    node_files = sorted(Path(data_root).glob("setting_*/batch_*/tree_*/nodes.csv"))
+    if not node_files:
+        raise ValueError(f"No simulated MACH2 input trees found under {data_root}")
+    missing_edges = [
+        nodes.with_name("edges.csv")
+        for nodes in node_files
+        if not nodes.with_name("edges.csv").is_file()
+    ]
+    if missing_edges:
+        raise ValueError(f"Missing matching MACH2 tree edge files: {missing_edges}")
+    return [str(nodes.parent / "mach2_full") for nodes in node_files]
+
+
+star3_mach2_full_outputs = mach2_full_outputs(star_transition_roots[3])
+linear_mach2_full_outputs = mach2_full_outputs(linear_transition_root)
 star_transition_edges_file = "src/transition_edges_star.txt"
 transition_edges_file = "src/transition_edges.txt"
 transition_times_file = "transition.txt"
@@ -449,6 +493,11 @@ def star3_beam_origin_time(wildcards, input):
     return tree.node_ages[tree.root_id] + 1e-4
 
 
+def linear_beam_origin_time(wildcards, input):
+    tree = read_tree(Path(input.nodes), Path(input.edges))
+    return tree.node_ages[tree.root_id] + 1e-4
+
+
 def star3_beam_barcode_outputs(wildcards):
     node_files = sorted(
         Path(star_transition_roots[3]).glob(
@@ -518,6 +567,16 @@ def star3_beam_mcmc_seed(wildcards):
     return 1 + zlib.crc32(tree_id.encode()) % 2_147_483_646
 
 
+def linear_beam_seed(wildcards):
+    tree_id = f"{wildcards.setting}/{wildcards.batch}/{wildcards.tree}"
+    return 7 + zlib.crc32(tree_id.encode())
+
+
+def linear_beam_mcmc_seed(wildcards):
+    tree_id = f"{wildcards.setting}/{wildcards.batch}/{wildcards.tree}"
+    return 1 + zlib.crc32(tree_id.encode()) % 2_147_483_646
+
+
 def star3_beam_run_directories(wildcards):
     node_files = sorted(
         Path(star_transition_roots[3]).glob(
@@ -536,6 +595,14 @@ star3_beam_burnin = float(config.get("star3_beam_burnin", 0.1))
 star3_beam_executable = config.get(
     "star3_beam_beast_executable",
     os.environ.get("BEAST_EXECUTABLE", "beast"),
+)
+linear_beam_chain_length = int(
+    config.get("linear_beam_chain_length", star3_beam_chain_length)
+)
+linear_beam_burnin = float(config.get("linear_beam_burnin", star3_beam_burnin))
+linear_beam_executable = config.get(
+    "linear_beam_beast_executable",
+    star3_beam_executable,
 )
 star3_beam_parameter_summary = (
     f"{star_transition_roots[3]}/beam_snakemake_parameter_summary.tsv"
@@ -589,6 +656,7 @@ rule tls_tree_cell_state_counts:
         tls_composite_leaf_count_table,
     params:
         python=sys.executable,
+        mach2_executable_arg=mach2_executable_arg,
     shell:
         "{params.python:q} -m src.results.tls.leaf_counts "
         "--config {input.settings:q}"
@@ -1301,6 +1369,286 @@ rule simulate_star_trees_3:
         lambda wildcards: star_transition_tree_edge_inputs(3)
 
 
+rule generate_linear_transition_settings:
+    input:
+        code="src/generate_linear_transition_settings.py",
+    output:
+        settings=expand(
+            f"{linear_transition_root}/setting_{{setting}}/setting.txt",
+            setting=linear_transition_setting_ids,
+        ),
+        manifest=f"{linear_transition_root}/generated_settings.csv",
+    params:
+        output_dir=linear_transition_root,
+        num_settings=linear_transition_num_settings,
+        seed=3,
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.generate_linear_transition_settings "
+        "--output-dir {params.output_dir:q} "
+        "--num-settings {params.num_settings} --seed {params.seed}"
+
+
+rule simulate_linear_transition_3:
+    input:
+        setting_file=(
+            f"{linear_transition_root}/setting_{{setting}}/setting.txt"
+        ),
+        code="src/simulator_coord.py",
+    output:
+        nodes=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/nodes.csv",
+        edges=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/edges.csv",
+        T_fig=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/T.png",
+        T_extant_fig=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/T_extant.png",
+        transition_times=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/transition_times.csv",
+        transitions_with_edges=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/transition_times_with_edges.csv",
+    params:
+        source_seed=star_source_seed,
+        output_dir=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{wildcards.tree}"
+        ),
+        python=sys.executable,
+    log:
+        std=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/stdout.log",
+        err=f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/stderr.log",
+    benchmark:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/tree_{{tree}}/benchmark.txt",
+    shell:
+        "{params.python:q} -m src.simulator_coord {input.setting_file:q} "
+        "{params.source_seed} {params.output_dir:q} "
+        "> {log.std:q} 2> {log.err:q}"
+
+
+rule simulate_linear_transition_3_all:
+    input:
+        expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{{tree}}/edges.csv",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+            tree=star_tree_indices,
+        )
+
+
+rule run_mach2_simulated_tree:
+    input:
+        nodes=lambda wildcards: (
+            f"{mach2_simulation_roots[wildcards.dataset]}/"
+            f"setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            f"tree_{wildcards.tree}/nodes.csv"
+        ),
+        edges=lambda wildcards: (
+            f"{mach2_simulation_roots[wildcards.dataset]}/"
+            f"setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            f"tree_{wildcards.tree}/edges.csv"
+        ),
+        code=[
+            "src/run_mach2_simulated_tree.py",
+            "src/process_data/sgootr/executables.py",
+        ],
+    output:
+        mach2_dir=directory(
+            f"{setting_root}/{{dataset}}/setting_{{setting}}/"
+            "batch_{batch}/tree_{tree}/mach2_full"
+        ),
+    params:
+        python=sys.executable,
+        mach2_executable_arg=mach2_executable_arg,
+        timelimit=mach2_timelimit,
+    threads: 1
+    log:
+        f"{setting_root}/{{dataset}}/setting_{{setting}}/"
+        "batch_{batch}/tree_{tree}/mach2_full.snakemake.log",
+    benchmark:
+        f"{setting_root}/{{dataset}}/setting_{{setting}}/"
+        "batch_{batch}/tree_{tree}/mach2_full.benchmark.txt",
+    wildcard_constraints:
+        dataset="star_3|linear_A_to_D",
+    shell:
+        "{params.python:q} -m src.run_mach2_simulated_tree "
+        "--nodes {input.nodes:q} --edges {input.edges:q} "
+        "--output-dir {output.mach2_dir:q} --threads {threads} "
+        "--timelimit {params.timelimit} "
+        "{params.mach2_executable_arg} > {log:q} 2>&1"
+
+
+rule mach2_star_3_all:
+    input:
+        star3_mach2_full_outputs
+
+
+rule mach2_linear_A_to_D_all:
+    input:
+        linear_mach2_full_outputs
+
+
+rule mach2_all:
+    input:
+        star3_mach2_full_outputs,
+        linear_mach2_full_outputs
+
+
+star3_top_twenty_concert = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    "inference_progressive_joint_first_8_trees.out"
+    for setting, batch in STAR3_TOP_TWENTY_BATCHES
+]
+linear_top_twenty_concert = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    "inference_joint_coordinate_first_8_trees.out"
+    for setting, batch in LINEAR_TOP_TWENTY_BATCHES
+]
+star3_top_twenty_diversitree = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    "diversitree_musse_first8/joint_musse_fit.txt"
+    for setting, batch in STAR3_TOP_TWENTY_BATCHES
+]
+linear_top_twenty_diversitree = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    "diversitree_musse_first8/joint_musse_fit.txt"
+    for setting, batch in LINEAR_TOP_TWENTY_BATCHES
+]
+star3_top_twenty_beam = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/beam_snakemake"
+    for setting, batch in STAR3_TOP_TWENTY_BATCHES
+    for tree in first_eight_tree_indices
+]
+linear_top_twenty_beam = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/beam_snakemake"
+    for setting, batch in LINEAR_TOP_TWENTY_BATCHES
+    for tree in linear_transition_first8_tree_indices
+]
+star3_top_twenty_mach2 = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/mach2_full"
+    for setting, batch in STAR3_TOP_TWENTY_BATCHES
+    for tree in first_eight_tree_indices
+]
+linear_top_twenty_mach2 = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/mach2_full"
+    for setting, batch in LINEAR_TOP_TWENTY_BATCHES
+    for tree in linear_transition_first8_tree_indices
+]
+
+
+rule coord_diff_top_twenty_concert:
+    input:
+        star3=star3_top_twenty_concert,
+        linear=linear_top_twenty_concert
+
+
+rule coord_diff_top_twenty_diversitree:
+    input:
+        star3=star3_top_twenty_diversitree,
+        linear=linear_top_twenty_diversitree
+
+
+rule coord_diff_top_twenty_beam:
+    input:
+        star3=star3_top_twenty_beam,
+        linear=linear_top_twenty_beam
+
+
+rule coord_diff_top_twenty_mach2:
+    input:
+        star3=star3_top_twenty_mach2,
+        linear=linear_top_twenty_mach2
+
+
+rule coord_diff_top_twenty_batches_methods:
+    input:
+        concert=star3_top_twenty_concert + linear_top_twenty_concert,
+        diversitree=(
+            star3_top_twenty_diversitree + linear_top_twenty_diversitree
+        ),
+        beam=star3_top_twenty_beam + linear_top_twenty_beam,
+        mach2=star3_top_twenty_mach2 + linear_top_twenty_mach2
+
+
+star3_top_fifty_concert = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    "inference_progressive_joint_first_8_trees.out"
+    for setting, batch in STAR3_TOP_FIFTY_BATCHES
+]
+linear_top_fifty_concert = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    "inference_joint_coordinate_first_8_trees.out"
+    for setting, batch in LINEAR_TOP_FIFTY_BATCHES
+]
+star3_top_fifty_diversitree = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    "diversitree_musse_first8/joint_musse_fit.txt"
+    for setting, batch in STAR3_TOP_FIFTY_BATCHES
+]
+linear_top_fifty_diversitree = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    "diversitree_musse_first8/joint_musse_fit.txt"
+    for setting, batch in LINEAR_TOP_FIFTY_BATCHES
+]
+star3_top_fifty_beam = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/beam_snakemake"
+    for setting, batch in STAR3_TOP_FIFTY_BATCHES
+    for tree in first_eight_tree_indices
+]
+linear_top_fifty_beam = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/beam_snakemake"
+    for setting, batch in LINEAR_TOP_FIFTY_BATCHES
+    for tree in linear_transition_first8_tree_indices
+]
+star3_top_fifty_mach2 = [
+    f"{star_transition_roots[3]}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/mach2_full"
+    for setting, batch in STAR3_TOP_FIFTY_BATCHES
+    for tree in first_eight_tree_indices
+]
+linear_top_fifty_mach2 = [
+    f"{linear_transition_root}/setting_{setting}/batch_{batch}/"
+    f"tree_{tree}/mach2_full"
+    for setting, batch in LINEAR_TOP_FIFTY_BATCHES
+    for tree in linear_transition_first8_tree_indices
+]
+
+
+rule coord_diff_top_fifty_concert:
+    input:
+        star3=star3_top_fifty_concert,
+        linear=linear_top_fifty_concert
+
+
+rule coord_diff_top_fifty_diversitree:
+    input:
+        star3=star3_top_fifty_diversitree,
+        linear=linear_top_fifty_diversitree
+
+
+rule coord_diff_top_fifty_beam:
+    input:
+        star3=star3_top_fifty_beam,
+        linear=linear_top_fifty_beam
+
+
+rule coord_diff_top_fifty_mach2:
+    input:
+        star3=star3_top_fifty_mach2,
+        linear=linear_top_fifty_mach2
+
+
+rule coord_diff_top_fifty_batches_methods:
+    input:
+        concert=star3_top_fifty_concert + linear_top_fifty_concert,
+        diversitree=(
+            star3_top_fifty_diversitree + linear_top_fifty_diversitree
+        ),
+        beam=star3_top_fifty_beam + linear_top_fifty_beam,
+        mach2=star3_top_fifty_mach2 + linear_top_fifty_mach2
+
+
 rule run_diversitree_star_2_batch:
     input:
         nodes=lambda wildcards: ancient(
@@ -1374,9 +1722,150 @@ rule run_diversitree_star_3_batch:
         "{params.maxit} > {log:q} 2>&1"
 
 
+rule run_diversitree_star_3_first8_batch:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{{tree}}/nodes.csv",
+            tree=first_eight_tree_indices,
+        ),
+        edges=lambda wildcards: expand(
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{{tree}}/edges.csv",
+            tree=first_eight_tree_indices,
+        ),
+        code="src/run_diversitree_musse_batch.R",
+    output:
+        fit=(
+            f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+            "diversitree_musse_first8/joint_musse_fit.txt"
+        ),
+    params:
+        batch_dir=lambda wildcards: (
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}"
+        ),
+        output_dir=lambda wildcards: (
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/diversitree_musse_first8"
+        ),
+        maxit=500,
+        transition_model="star",
+        num_trees=8,
+    threads: 1
+    log:
+        f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+        "diversitree_musse_first8.snakemake.log",
+    shell:
+        "module load R/4.5.2-gfbf-2025b GSL/2.8-GCC-14.3.0 && "
+        "Rscript {input.code:q} {params.batch_dir:q} {params.output_dir:q} "
+        "{params.maxit} {params.transition_model:q} {params.num_trees} "
+        "> {log:q} 2>&1"
+
+
+rule run_diversitree_linear_transition_batch:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{{tree}}/nodes.csv",
+            tree=star_tree_indices,
+        ),
+        edges=lambda wildcards: expand(
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{{tree}}/edges.csv",
+            tree=star_tree_indices,
+        ),
+        code="src/run_diversitree_musse_batch.R",
+    output:
+        fit=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "diversitree_musse/joint_musse_fit.txt"
+        ),
+    params:
+        batch_dir=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}"
+        ),
+        output_dir=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/diversitree_musse"
+        ),
+        maxit=500,
+        transition_model="linear",
+    threads: 1
+    log:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+        "diversitree_musse.snakemake.log",
+    shell:
+        "module load R/4.5.2-gfbf-2025b GSL/2.8-GCC-14.3.0 && "
+        "Rscript {input.code:q} {params.batch_dir:q} {params.output_dir:q} "
+        "{params.maxit} {params.transition_model:q} > {log:q} 2>&1"
+
+
+rule run_diversitree_linear_transition_first8_batch:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{{tree}}/nodes.csv",
+            tree=linear_transition_first8_tree_indices,
+        ),
+        edges=lambda wildcards: expand(
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{{tree}}/edges.csv",
+            tree=linear_transition_first8_tree_indices,
+        ),
+        code="src/run_diversitree_musse_batch.R",
+    output:
+        fit=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "diversitree_musse_first8/joint_musse_fit.txt"
+        ),
+    params:
+        batch_dir=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}"
+        ),
+        output_dir=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/diversitree_musse_first8"
+        ),
+        maxit=500,
+        transition_model="linear",
+        num_trees=8,
+    threads: 1
+    log:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+        "diversitree_musse_first8.snakemake.log",
+    shell:
+        "module load R/4.5.2-gfbf-2025b GSL/2.8-GCC-14.3.0 && "
+        "Rscript {input.code:q} {params.batch_dir:q} {params.output_dir:q} "
+        "{params.maxit} {params.transition_model:q} {params.num_trees} "
+        "> {log:q} 2>&1"
+
+
 rule diversitree_star_3_matched_batches:
     input:
         star3_diversitree_output_files
+
+
+rule diversitree_linear_transition_3_all:
+    input:
+        expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "diversitree_musse/joint_musse_fit.txt",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+        )
+
+
+rule diversitree_linear_transition_first8_all:
+    input:
+        expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "diversitree_musse_first8/joint_musse_fit.txt",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+        )
 
 
 rule generate_star_3_beam_barcodes:
@@ -1448,6 +1937,11 @@ rule run_star_3_beam_fixed_tree:
     params:
         python=sys.executable,
         beast_executable=star3_beam_executable,
+        beast_log=lambda wildcards: (
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{wildcards.tree}/"
+            "beam_snakemake.beast.log"
+        ),
         chain_length=star3_beam_chain_length,
         burnin=star3_beam_burnin,
         seed=star3_beam_mcmc_seed,
@@ -1458,15 +1952,16 @@ rule run_star_3_beam_fixed_tree:
     threads: 2
     log:
         f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
-        "tree_{tree}/beam_snakemake.log",
+        "tree_{tree}/beam_snakemake.runner.log",
     shell:
         "{params.python:q} -m src.run_beam_fixed_tree "
         "--nodes {input.nodes:q} --edges {input.edges:q} "
         "--barcodes {input.barcodes:q} --template {input.template:q} "
-        "--output-dir {output.run_dir:q} --beast-log {log:q} "
+        "--output-dir {output.run_dir:q} --beast-log {params.beast_log:q} "
         "--beast-executable {params.beast_executable:q} "
         "--chain-length {params.chain_length} --burnin {params.burnin} "
-        "--seed {params.seed} --tree-id {params.tree_id:q}"
+        "--seed {params.seed} --tree-id {params.tree_id:q} "
+        "> {log:q} 2>&1"
 
 
 rule summarize_star_3_beam_all:
@@ -1490,6 +1985,119 @@ rule infer_star_3_beam_all:
     input:
         parameters=star3_beam_parameter_summary,
         status=star3_beam_run_status
+
+
+rule generate_linear_transition_beam_barcodes_first8:
+    input:
+        nodes=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/nodes.csv"
+        ),
+        edges=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/edges.csv"
+        ),
+        code="src/generate_beam_barcodes.py",
+    output:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+        "tree_{tree}/barcodes_100_sites.tsv",
+    params:
+        python=sys.executable,
+        num_sites=100,
+        mutation_rate=0.1,
+        num_edit_states=4,
+        silencing_rate=0.1,
+        origin_time=linear_beam_origin_time,
+        seed=linear_beam_seed,
+    threads: 1
+    log:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+        "tree_{tree}/barcodes_100_sites.snakemake.log",
+    shell:
+        "{params.python:q} -m src.generate_beam_barcodes "
+        "--nodes {input.nodes:q} --edges {input.edges:q} "
+        "--output {output:q} --num-sites {params.num_sites} "
+        "--mutation-rate {params.mutation_rate} "
+        "--num-edit-states {params.num_edit_states} "
+        "--silencing-rate {params.silencing_rate} "
+        "--origin-time {params.origin_time} --seed {params.seed} "
+        "> {log:q} 2>&1"
+
+
+rule generate_linear_transition_beam_barcodes_first8_all:
+    input:
+        expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{{tree}}/barcodes_100_sites.tsv",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+            tree=linear_transition_first8_tree_indices,
+        )
+
+
+rule run_linear_transition_beam_fixed_tree_first8:
+    input:
+        nodes=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/nodes.csv"
+        ),
+        edges=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/edges.csv"
+        ),
+        barcodes=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/barcodes_100_sites.tsv"
+        ),
+        template="src/beam_fixed_tree_template.xml",
+        code=[
+            "src/run_beam_fixed_tree.py",
+            "src/generate_beam_barcodes.py",
+        ],
+    output:
+        run_dir=directory(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/beam_snakemake"
+        ),
+    params:
+        python=sys.executable,
+        beast_executable=linear_beam_executable,
+        beast_log=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}/tree_{wildcards.tree}/"
+            "beam_snakemake.beast.log"
+        ),
+        chain_length=linear_beam_chain_length,
+        burnin=linear_beam_burnin,
+        seed=linear_beam_mcmc_seed,
+        tree_id=lambda wildcards: (
+            f"setting_{wildcards.setting}/batch_{wildcards.batch}/"
+            f"tree_{wildcards.tree}"
+        ),
+    threads: 2
+    log:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+        "tree_{tree}/beam_snakemake.runner.log",
+    shell:
+        "{params.python:q} -m src.run_beam_fixed_tree "
+        "--nodes {input.nodes:q} --edges {input.edges:q} "
+        "--barcodes {input.barcodes:q} --template {input.template:q} "
+        "--output-dir {output.run_dir:q} --beast-log {params.beast_log:q} "
+        "--beast-executable {params.beast_executable:q} "
+        "--chain-length {params.chain_length} --burnin {params.burnin} "
+        "--seed {params.seed} --tree-id {params.tree_id:q} "
+        "> {log:q} 2>&1"
+
+
+rule infer_linear_transition_beam_first8_all:
+    input:
+        expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "tree_{tree}/beam_snakemake",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+            tree=linear_transition_first8_tree_indices,
+        )
 
 
 rule infer_star_2_joint_progressive_first8:
@@ -1656,6 +2264,203 @@ rule infer_star_3_joint_progressive_first8_all:
             setting=star_transition_setting_ids[3],
             batch=batch_indices,
         )
+
+
+rule infer_star_3_joint_progressive_first32:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            "batch_{batch}/tree_{tree}/nodes.csv",
+            batch=[wildcards.batch],
+            tree=range(32),
+        ),
+        edges=lambda wildcards: expand(
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            "batch_{batch}/tree_{tree}/edges.csv",
+            batch=[wildcards.batch],
+            tree=range(32),
+        ),
+        transition_edges=star_transition_edges_file,
+        code=[
+            "src/progressive_joint_transition_times.py",
+            "src/main2_joint_transition_times.py",
+            "src/main2.py",
+            "src/dataprocessor.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dtos.py",
+        ],
+    output:
+        out=(
+            f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_progressive_joint_first_32_trees.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{star_transition_roots[3]}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}"
+        ),
+        random_seed=lambda wildcards: (
+            int(wildcards.setting.split("_")[-1]) * 1000
+            + int(wildcards.batch)
+        ),
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_progressive_joint_first_32_trees.log"
+        ),
+        stdout=(
+            f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_progressive_joint_first_32_trees.stdout.log"
+        ),
+        stderr=(
+            f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_progressive_joint_first_32_trees.stderr.log"
+        ),
+    benchmark:
+        f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/inference_progressive_joint_first_32_trees.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.progressive_joint_transition_times "
+        "--tree-directory {params.tree_directory:q} "
+        "--num-states 4 --num-trees 32 "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--num-transition-times 3 --max-time 1 --grid-size 1000 "
+        "--random-seed {params.random_seed} "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu --optimizer adam --normalize-root-likelihood "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_star_3_joint_progressive_first32_all:
+    input:
+        expand(
+            f"{star_transition_roots[3]}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_progressive_joint_first_32_trees.out",
+            setting=star_transition_setting_ids[3],
+            batch=batch_indices,
+        )
+
+
+rule infer_linear_transition_3_joint_coordinate_first8:
+    input:
+        nodes=lambda wildcards: expand(
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            "batch_{batch}/tree_{tree}/nodes.csv",
+            batch=[wildcards.batch],
+            tree=range(8),
+        ),
+        edges=lambda wildcards: expand(
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            "batch_{batch}/tree_{tree}/edges.csv",
+            batch=[wildcards.batch],
+            tree=range(8),
+        ),
+        transition_edges="src/transition_edges_linear.txt",
+        code=[
+            "src/joint_state_specific_transition_times.py",
+            "src/mle_state_specific_transitions.py",
+            "src/closed_form_state_specific_transitions.py",
+            "src/main2_joint_transition_times.py",
+            "src/main2.py",
+            "src/mle_closed_form2.py",
+            "src/dataprocessor.py",
+            "src/tree_utils.py",
+            "src/dtos.py",
+        ],
+    output:
+        out=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_coordinate_first_8_trees.out"
+        ),
+    params:
+        tree_directory=lambda wildcards: (
+            f"{linear_transition_root}/setting_{wildcards.setting}/"
+            f"batch_{wildcards.batch}"
+        ),
+        random_seed=lambda wildcards: (
+            int(wildcards.setting.split("_")[-1]) * 1000
+            + int(wildcards.batch)
+        ),
+        python=sys.executable,
+    log:
+        optimization=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_coordinate_first_8_trees.log"
+        ),
+        stdout=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_coordinate_first_8_trees.stdout.log"
+        ),
+        stderr=(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_coordinate_first_8_trees.stderr.log"
+        ),
+    benchmark:
+        f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/inference_joint_coordinate_first_8_trees.benchmark",
+    shell:
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.joint_state_specific_transition_times "
+        "--tree-directory {params.tree_directory:q} "
+        "--num-states 4 --num-trees 8 "
+        "--transition-edges-file {input.transition_edges:q} "
+        "--max-time 1 --grid-size 1000 "
+        "--random-seed {params.random_seed} --lbfgs-max-iter 20 "
+        "--search-rounds 6 "
+        "--output {output.out:q} --log {log.optimization:q} "
+        "--device cpu "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
+rule infer_linear_transition_3_joint_coordinate_all:
+    input:
+        expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_coordinate_first_8_trees.out",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+        )
+
+
+rule plot_linear_transition_3_identifiable_parameters:
+    input:
+        truth=f"{linear_transition_root}/generated_settings.csv",
+        joint_coordinate=expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "inference_joint_coordinate_first_8_trees.out",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+        ),
+        diversitree=expand(
+            f"{linear_transition_root}/setting_{{setting}}/batch_{{batch}}/"
+            "diversitree_musse/joint_musse_fit.txt",
+            setting=linear_transition_setting_ids,
+            batch=batch_indices,
+        ),
+        code="src/plot_linear_transition_inference_accuracy.py",
+    output:
+        plot=(
+            f"{linear_transition_root}/figures/"
+            "identifiable_parameters_ground_truth_vs_inferred.png"
+        ),
+    params:
+        data_dir=linear_transition_root,
+        python=sys.executable,
+    shell:
+        "{params.python:q} -m src.plot_linear_transition_inference_accuracy "
+        "--data-dir {params.data_dir:q} --output {output.plot:q}"
 
 
 rule extract_star_transition_times:

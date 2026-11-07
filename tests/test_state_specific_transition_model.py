@@ -10,6 +10,34 @@ from src.mle_state_specific_transitions import StateSpecificTransitionParameters
 
 
 class StateSpecificTransitionModelTests(unittest.TestCase):
+    def test_linear_four_state_epochs_use_only_the_scheduled_edge(self) -> None:
+        parameters = StateSpecificTransitionParameters(
+            [0.1, 0.2, 0.3],
+            torch.device("cpu"),
+            epoch_edges=((0, 1), (1, 2), (2, 3)),
+            num_states=4,
+            initial_transition_probabilities=(0.2, 0.3, 0.4),
+        )
+
+        matrices = parameters.transition_probabilities
+        self.assertEqual(tuple(matrices.shape), (3, 4, 4))
+        for epoch, (source, target) in enumerate(((0, 1), (1, 2), (2, 3))):
+            self.assertAlmostEqual(
+                matrices[epoch, source, target].detach().item(),
+                (0.2, 0.3, 0.4)[epoch],
+                places=7,
+            )
+            for other_source in range(4):
+                if other_source != source:
+                    self.assertEqual(
+                        matrices[epoch, other_source, other_source].item(),
+                        1.0,
+                    )
+                    self.assertTrue(
+                        torch.count_nonzero(matrices[epoch, other_source]).item()
+                        == 1
+                    )
+
     def test_epoch_matrices_allow_only_the_assigned_transition(self) -> None:
         parameters = StateSpecificTransitionParameters(
             [0.1, 0.2],

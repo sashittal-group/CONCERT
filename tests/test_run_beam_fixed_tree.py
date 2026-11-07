@@ -141,6 +141,31 @@ class RunBeamFixedTreeTests(unittest.TestCase):
         self.assertIn("completed", status_output.read_text())
         self.assertIn("clockRate", parameter_output.read_text())
 
+    def test_missing_beast_executable_fails_with_configuration_hint(self) -> None:
+        barcode_path = self.root / "barcodes.tsv"
+        barcode_path.write_text("\tbarcode_1\nleft\t0\nright\t1\n")
+        template = Path(__file__).parents[1] / "src/beam_fixed_tree_template.xml"
+
+        with self.assertRaisesRegex(
+            FileNotFoundError,
+            "Set BEAST_EXECUTABLE or pass --config",
+        ):
+            run_inference(
+                Namespace(
+                    nodes=self.nodes_path,
+                    edges=self.edges_path,
+                    barcodes=barcode_path,
+                    template=template,
+                    output_dir=self.root / "missing/beam_snakemake",
+                    beast_log=self.root / "missing.beast.log",
+                    beast_executable="missing-beast-executable",
+                    tree_id="setting_1/batch_0/tree_0",
+                    chain_length=100,
+                    seed=17,
+                    burnin=0.0,
+                )
+            )
+
     def test_single_tip_tree_is_recorded_as_skipped(self) -> None:
         nodes_path = self.root / "single_node.csv"
         edges_path = self.root / "single_edges.csv"

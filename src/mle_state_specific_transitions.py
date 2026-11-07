@@ -27,6 +27,7 @@ class StateSpecificTransitionParameters(PhylodynamicParameters):
         device: torch.device,
         *,
         epoch_edges: tuple[tuple[int, int], ...] | None = None,
+        num_states: int = len(STATE_NAMES),
         initial_transition_probabilities: tuple[float, ...] | None = None,
         initial_birth_rates=None,
         initial_death_rates=None,
@@ -35,6 +36,8 @@ class StateSpecificTransitionParameters(PhylodynamicParameters):
     ) -> None:
         if epoch_edges is None:
             epoch_edges = EPOCH_EDGES
+        if num_states < 2:
+            raise ValueError("At least two states are required.")
         if not transition_times:
             raise ValueError("At least one state-specific transition time is required.")
         if len(transition_times) != len(epoch_edges):
@@ -43,9 +46,16 @@ class StateSpecificTransitionParameters(PhylodynamicParameters):
             )
         if any(time_value < 0.0 for time_value in transition_times):
             raise ValueError("Transition times must be nonnegative.")
-        if any(edge not in EPOCH_EDGES for edge in epoch_edges):
+        if any(
+            source < 0
+            or source >= num_states
+            or target < 0
+            or target >= num_states
+            or source == target
+            for source, target in epoch_edges
+        ):
             raise ValueError(
-                "Each epoch must be assigned NC->PT or PT->LN."
+                "Each epoch edge must connect two distinct valid states."
             )
         if any(
             not transition_times[index - 1] < transition_times[index]
@@ -64,10 +74,10 @@ class StateSpecificTransitionParameters(PhylodynamicParameters):
                 "states and be in (0, 1)."
             )
 
-        identity = torch.eye(3, dtype=torch.float64, device=device)
+        identity = torch.eye(num_states, dtype=torch.float64, device=device)
         super().__init__(
-            num_states=3,
-            free_edges=list(EPOCH_EDGES),
+            num_states=num_states,
+            free_edges=list(epoch_edges),
             given_transition_times=transition_times,
             device=device,
             initial_birth_rates=initial_birth_rates,
@@ -152,14 +162,15 @@ def calculate_total_log_likelihood(
     )
     transition_times = params.transition_times.detach().cpu().tolist()
     for tree_index, datastructure in enumerate(datastructures):
+        local_epoch_count = len(datastructure) - 1
         tree_likelihood = calculate_log_likelihood(
             datastructure,
             params.birth_rates,
             params.death_rates,
-            transition_probabilities,
+            transition_probabilities[:local_epoch_count],
             params.sampling_probabilities,
-            u_result.Cs,
-            transition_times,
+            u_result.Cs[:local_epoch_count + 1],
+            transition_times[:local_epoch_count],
         )
         total_log_likelihood = total_log_likelihood + tree_likelihood[0, 0]
         if normalize_root_likelihood:
@@ -175,9 +186,13 @@ def optimize_parameters(
     transition_times: list[float],
     *,
     epoch_edges: tuple[tuple[int, int], ...] = EPOCH_EDGES,
+    num_states: int = len(STATE_NAMES),
     logfile: str | Path | None = None,
     device: torch.device | str = "cpu",
     initial_transition_probabilities: tuple[float, ...] | None = None,
+    initial_birth_rates=None,
+    initial_death_rates=None,
+    initial_sampling_probabilities=None,
     lbfgs_max_iter: int = 20,
     lbfgs_history_size: int = 100,
     normalize_root_likelihood: bool = False,
@@ -194,7 +209,11 @@ def optimize_parameters(
         transition_times,
         optimization_device,
         epoch_edges=epoch_edges,
+        num_states=num_states,
         initial_transition_probabilities=initial_transition_probabilities,
+        initial_birth_rates=initial_birth_rates,
+        initial_death_rates=initial_death_rates,
+        initial_sampling_probabilities=initial_sampling_probabilities,
     ).to(optimization_device)
     optimizer = torch.optim.LBFGS(
         [parameter for parameter in params.parameters() if parameter.requires_grad],

@@ -110,8 +110,8 @@ def coordinate_search_transition_times(
         raise ValueError("transition times must be strictly increasing")
 
     times = list(initial_times)
-    best_value = objective(times)
     min_gap = max_time * 1e-8
+    best_value = objective(times)
 
     for index in range(len(times)):
         lower = min_gap if index == 0 else times[index - 1] + min_gap

@@ -23,12 +23,42 @@ maxit <- if (length(args) >= 3) as.integer(args[[3]]) else 500L
 if (is.na(maxit) || maxit < 1L) {
   stop("maxit must be a positive integer")
 }
-resume <- length(args) >= 4 && identical(args[[4]], "--resume")
+transition_model <- if (length(args) >= 4 && !startsWith(args[[4]], "--")) {
+  args[[4]]
+} else {
+  "star"
+}
+num_trees <- if (length(args) >= 5 && !startsWith(args[[5]], "--")) {
+  as.integer(args[[5]])
+} else {
+  NULL
+}
+if (!transition_model %in% c("star", "linear")) {
+  stop("transition_model must be 'star' or 'linear'")
+}
+if (!is.null(num_trees) && (is.na(num_trees) || num_trees < 1L)) {
+  stop("num_trees must be a positive integer")
+}
+resume <- "--resume" %in% args
+allowed_transition_names <- switch(
+  transition_model,
+  star = c("q12", "q13", "q14"),
+  linear = c("q12", "q23", "q34")
+)
+allowed_transition_labels <- switch(
+  transition_model,
+  star = c("A->B", "A->C", "A->D"),
+  linear = c("A->B", "B->C", "C->D")
+)
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 tree_dirs <- list.dirs(batch_dir, recursive = FALSE, full.names = TRUE)
 tree_dirs <- tree_dirs[grepl("/tree_[0-9]+$", tree_dirs)]
+if (!is.null(num_trees)) {
+  tree_indices <- as.integer(sub("^.*tree_([0-9]+)$", "\\1", tree_dirs))
+  tree_dirs <- tree_dirs[tree_indices < num_trees]
+}
 has_nodes <- file.exists(file.path(tree_dirs, "nodes.csv"))
 has_edges <- file.exists(file.path(tree_dirs, "edges.csv"))
 if (any(xor(has_nodes, has_edges))) {
@@ -223,20 +253,27 @@ base_likelihoods <- lapply(
     )
   }
 )
+all_transition_names <- unlist(
+  lapply(
+    seq_len(4L),
+    function(source) paste0("q", source, seq_len(4L)[-source])
+  ),
+  use.names = FALSE
+)
+zero_transition_names <- setdiff(
+  all_transition_names,
+  allowed_transition_names
+)
+zero_transition_constraints <- lapply(
+  zero_transition_names,
+  function(parameter) stats::as.formula(paste(parameter, "~ 0"))
+)
 constrained_likelihoods <- lapply(
   base_likelihoods,
   function(likelihood) {
-    diversitree::constrain(
-      likelihood,
-      q21 ~ 0,
-      q23 ~ 0,
-      q24 ~ 0,
-      q31 ~ 0,
-      q32 ~ 0,
-      q34 ~ 0,
-      q41 ~ 0,
-      q42 ~ 0,
-      q43 ~ 0
+    do.call(
+      diversitree::constrain,
+      c(list(likelihood), zero_transition_constraints)
     )
   }
 )
@@ -368,7 +405,7 @@ saveRDS(
     tree_summary = tree_summary,
     excluded_single_tip_trees = excluded_single_tip_trees,
     sampling_fraction = sampling_fraction,
-    allowed_transitions = c("A->B", "A->C", "A->D"),
+    allowed_transitions = allowed_transition_labels,
     root_handling = "Unary root stem dropped with ape::collapse.singles(root.edge=FALSE)",
     root_conditioning = "MuSSE ROOT.OBS",
     condition_survival = TRUE,
@@ -377,6 +414,7 @@ saveRDS(
   file.path(output_dir, "joint_musse_fit.rds")
 )
 
+allowed_transition_summary <- paste(allowed_transition_labels, collapse = ",")
 summary_lines <- c(
   paste0("batch_dir=", batch_dir),
   paste0("trees=", length(tree_data)),
@@ -390,7 +428,8 @@ summary_lines <- c(
     }
   ),
   paste0("sampling_fraction=", paste(sampling_fraction, collapse = ",")),
-  "allowed_transitions=A->B,A->C,A->D",
+  paste0("transition_model=", transition_model),
+  paste0("allowed_transitions=", allowed_transition_summary),
   "other_transition_rates=0",
   "root_stem=dropped",
   "root_conditioning=ROOT.OBS",
