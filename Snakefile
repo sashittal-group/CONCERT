@@ -4298,6 +4298,82 @@ rule infer_kptracer_progressive:
         "done"
 
 
+rule infer_kptracer_source_specific_times:
+    input:
+        nodes=f"{kptracer_root}/nodes_0.csv",
+        edges=f"{kptracer_root}/edges_0.csv",
+        transition_edges="src/transition_edges_kptracer.txt",
+        seed=(
+            f"{kptracer_root}/"
+            "inference_progressive_fixed_sampling_0.05_5_20_regenerated_grid_100/"
+            "transition_count_11.out"
+        ),
+        code=[
+            "src/results/kptracer/infer_source_specific_transition_times.py",
+            "src/progressive_joint_transition_times.py",
+            "src/main2_joint_transition_times.py",
+            "src/main2.py",
+            "src/mle_closed_form2.py",
+            "src/closed_form_coord2.py",
+            "src/tree_utils.py",
+            "src/dataprocessor.py",
+            "src/dtos.py",
+            "src/results/tls/data.py",
+        ],
+    output:
+        out=(
+            f"{kptracer_root}/inference_source_specific_transition_times/"
+            "transition_count_4.out"
+        ),
+        source_times=(
+            f"{kptracer_root}/inference_source_specific_transition_times/"
+            "transition_times_by_source.tsv"
+        ),
+    params:
+        tree_directory=kptracer_root,
+        output_directory=(
+            f"{kptracer_root}/inference_source_specific_transition_times"
+        ),
+        max_steps=50000,
+        patience=500,
+        grid_size=100,
+        rounds=1,
+        starts=4,
+        python=sys.executable,
+    threads: 1
+    log:
+        stdout=(
+            f"{kptracer_root}/inference_source_specific_transition_times/"
+            "inference.stdout.log"
+        ),
+        stderr=(
+            f"{kptracer_root}/inference_source_specific_transition_times/"
+            "inference.stderr.log"
+        ),
+    benchmark:
+        f"{kptracer_root}/inference_source_specific_transition_times/"
+        "inference.benchmark"
+    shell:
+        "set -euo pipefail && "
+        "job_tmp=$(mktemp -d) && "
+        "trap 'rm -rf \"$job_tmp\"' EXIT && "
+        "mkdir -p \"$job_tmp/inductor-cache\" \"$job_tmp/tmp\" && "
+        "export TORCHINDUCTOR_CACHE_DIR=\"$job_tmp/inductor-cache\" && "
+        "export TMPDIR=\"$job_tmp/tmp\" && "
+        "export DYLD_FALLBACK_LIBRARY_PATH=/usr/lib && "
+        "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 && "
+        "{params.python:q} -m src.results.kptracer.infer_source_specific_transition_times "
+        "--tree-directory {params.tree_directory:q} "
+        "--seed {input.seed:q} "
+        "--transition-edges {input.transition_edges:q} "
+        "--output {output.out:q} "
+        "--source-times-output {output.source_times:q} "
+        "--max-steps {params.max_steps} --patience {params.patience} "
+        "--grid-size {params.grid_size} --rounds {params.rounds} "
+        "--starts {params.starts} "
+        "> {log.stdout:q} 2> {log.stderr:q}"
+
+
 rule infer_kptracer_per_edge:
     input:
         nodes=f"{kptracer_root}/nodes_0.csv",

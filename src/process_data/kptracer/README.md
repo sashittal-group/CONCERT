@@ -61,6 +61,19 @@ schedules have non-finite likelihoods for the KPTracer tree.
 The same workflow is also available as the Snakemake target
 `infer_kptracer_progressive`.
 
+To refit CONCERT N=11 from its learned parameters while requiring every
+state's self-transition probability to exceed 0.90, run:
+
+```bash
+python -m src.results.kptracer.refine_self_transition_probability
+```
+
+The script keeps sampling probabilities fixed at 0.05 and performs two
+alternating parameter-fit and transition-time coordinate-refinement rounds,
+starting from the CONCERT N=11 parameters and times. The result and round
+checkpoints are written to
+`data/KPTracer-Data/processed_data/inference_self_transition_probability_min_0.90_n11/`.
+
 To fit CARTA using the 23 co-transmission times derived from a SharpTNI run,
 first run `./sharp-tni/run_kptracer.sh`, then set
 `kptracer_sharptni_cotransmission_run_directory` in
@@ -130,6 +143,28 @@ need a small display-only shift to leave a visible gap. Zero-count times are
 marked with a dot; the table records both exact times and any display shift.
 The plot and complete transition-count table are written under
 `data/KPTracer-Data/processed_data/transition_type_counts/`.
+
+To plot, for each allowed source-target transition, transitioned lineages
+against lineages that remain in the source at each scheduled time, run:
+
+```bash
+python -m src.results.kptracer.plot_lineages_vs_remaining
+```
+
+It creates one figure per transition type, with one panel per fit, plus one
+PNG comparing all eight transition types across the five fits. The individual
+figures are one-quarter narrower than before. All scheduled points, including
+zero-transition points, are shown as black dots. The combined PDF, all-types
+PNG, and exact-time CSV are saved under
+`data/KPTracer-Data/processed_data/transition_type_counts/lineages_vs_remaining/`.
+The x-axis is the total number of lineages in the source state immediately
+before the transition. Pearson correlation uses that count and the transitioned
+count, including all nonzero-transition points and only the zero-transition
+point(s) with the greatest remaining-source count. The correlation sample
+count is shown; the metric is N/A when there are fewer than three included
+points or either variable is constant.
+When defined, a dashed red least-squares line is fitted to those same
+correlation points.
 
 To regenerate and refine transition counts 5–20, run:
 

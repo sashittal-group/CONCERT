@@ -146,6 +146,7 @@ def _fixed_parameter_likelihood(
     normalize_root_likelihood: bool,
     fixed_sampling_probability: float | None = None,
     verbose: bool = False,
+    minimum_self_transition_probability: float | None = None,
 ) -> float:
     initial_parameters = {}
     if result is not None:
@@ -170,6 +171,9 @@ def _fixed_parameter_likelihood(
             [fixed_sampling_probability] * num_states
             if fixed_sampling_probability is not None
             else None
+        ),
+        minimum_self_transition_probability=(
+            minimum_self_transition_probability
         ),
         **initial_parameters,
     ).to(device)
@@ -199,6 +203,7 @@ def _find_finite_initial_schedule(
     max_attempts: int,
     fixed_sampling_probability: float | None = None,
     verbose: bool = False,
+    minimum_self_transition_probability: float | None = None,
 ) -> list[float]:
     generator = random.Random(random_seed)
     if num_transition_times > 999:
@@ -235,6 +240,9 @@ def _find_finite_initial_schedule(
             normalize_root_likelihood=normalize_root_likelihood,
             fixed_sampling_probability=fixed_sampling_probability,
             verbose=verbose,
+            minimum_self_transition_probability=(
+                minimum_self_transition_probability
+            ),
         )
         if math.isfinite(likelihood):
             return candidate

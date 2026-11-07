@@ -19,3 +19,23 @@ profile tables under `src/results/kptracer/data/KPTracer/`.
 Transition probabilities are shown as a log-scaled matrix heatmap, and the
 composite scaled-sampling panel omits L1. KPTracer plots label states directly
 rather than repeating the dataset name.
+
+## Source-specific transition times
+
+The source-specific fit assigns one transition time to each KPTracer source state
+with outgoing edges (T1, L2, L3, and S1). At each time, only that source state's
+transition-probability row is active. The fit is seeded from the unconstrained
+CONCERT N=11 result, fixes sampling probabilities at 0.05, and jointly refines
+the source times, birth/death rates, and allowed transition probabilities. It
+uses four cyclic assignments of seed times to compare starts, and does not
+impose a minimum self-transition probability.
+
+Run the inference with Snakemake:
+
+```bash
+snakemake --cores all --rerun-incomplete \
+  data/KPTracer-Data/processed_data/inference_source_specific_transition_times/transition_count_4.out
+```
+
+The result and source-to-time mapping are written under
+`data/KPTracer-Data/processed_data/inference_source_specific_transition_times/`.

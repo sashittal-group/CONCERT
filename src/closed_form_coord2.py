@@ -23,6 +23,41 @@ from src.tree_utils import prepare_tree
 NEG_INF = -torch.inf
 
 
+def _transition_probabilities_at_epoch(
+    transition_probabilities: torch.Tensor,
+    active_sources: Sequence[int] | None,
+) -> torch.Tensor:
+    if active_sources is None:
+        return transition_probabilities
+
+    num_states = transition_probabilities.shape[0]
+    identity = torch.eye(
+        num_states,
+        dtype=transition_probabilities.dtype,
+        device=transition_probabilities.device,
+    )
+    if not active_sources:
+        return identity
+    active_mask = torch.zeros(
+        num_states,
+        dtype=torch.bool,
+        device=transition_probabilities.device,
+    ).scatter(
+        0,
+        torch.as_tensor(
+            active_sources,
+            dtype=torch.long,
+            device=transition_probabilities.device,
+        ),
+        True,
+    )
+    return torch.where(
+        active_mask[:, None],
+        transition_probabilities,
+        identity,
+    )
+
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -40,6 +75,7 @@ def calculate_Us(
     transition_probabilities: torch.Tensor,
     transition_times: torch.Tensor,
     root_times: Sequence[float] | torch.Tensor,
+    transition_sources_by_time: Sequence[Sequence[int]] | None = None,
 ) -> UResult:
     if birth_rates.ndim != 1:
         raise ValueError("birth_rates must have shape (num_states,)")
@@ -51,6 +87,18 @@ def calculate_Us(
     num_steps = len(transition_times)
     if num_steps == 0:
         raise ValueError("transition_times cannot be empty")
+    if transition_sources_by_time is not None and (
+        len(transition_sources_by_time) != num_steps
+        or any(
+            len(set(sources)) != len(sources)
+            or any(not 0 <= source < birth_rates.numel() for source in sources)
+            for sources in transition_sources_by_time
+        )
+    ):
+        raise ValueError(
+            "transition_sources_by_time must contain valid, unique sources "
+            "for every transition time"
+        )
 
     root_times = torch.as_tensor(
         root_times,
@@ -88,7 +136,15 @@ def calculate_Us(
         exponential = torch.exp(-rates * dt)
         denominator = 1.0 - C_values[n] * exponential
         flow_U_n = 1.0 - rates / (birth_rates * denominator)
-        U_n = transition_probabilities @ flow_U_n
+        epoch_probabilities = _transition_probabilities_at_epoch(
+            transition_probabilities,
+            (
+                None
+                if transition_sources_by_time is None
+                else transition_sources_by_time[n]
+            ),
+        )
+        U_n = epoch_probabilities @ flow_U_n
         C_n = (U_n - death_rates / birth_rates) / (U_n - 1.0)
 
         flow_U_values.append(flow_U_n)
@@ -145,6 +201,7 @@ def calculate_log_likelihood(
     sampling_probabilities: torch.Tensor,
     Cs: torch.Tensor,
     transition_times: Sequence[float],
+    transition_sources_by_time: Sequence[Sequence[int]] | None = None,
 ) -> LikelihoodResult:
     """Calculate likelihoods by batching independent tree levels."""
 
@@ -154,6 +211,21 @@ def calculate_log_likelihood(
     log_probabilities = torch.log(
         transition_probabilities.clamp_min(torch.finfo(dtype).tiny)
     )
+    if transition_sources_by_time is not None and (
+        len(transition_sources_by_time) != len(transition_times)
+        or any(
+            len(set(sources)) != len(sources)
+            or any(
+                not 0 <= source < birth_rates.numel()
+                for source in sources
+            )
+            for sources in transition_sources_by_time
+        )
+    ):
+        raise ValueError(
+            "transition_sources_by_time must contain valid, unique sources "
+            "for every transition time"
+        )
     rates = birth_rates - death_rates
 
     level_lls = []
@@ -212,8 +284,18 @@ def calculate_log_likelihood(
         level_ll += edge_matrix @ edge_ll
 
         if i > 0: 
+            if transition_sources_by_time is None:
+                epoch_log_probabilities = log_probabilities
+            else:
+                epoch_probabilities = _transition_probabilities_at_epoch(
+                    transition_probabilities,
+                    transition_sources_by_time[i - 1],
+                )
+                epoch_log_probabilities = torch.log(
+                    epoch_probabilities.clamp_min(torch.finfo(dtype).tiny)
+                )
             child_messages = torch.logsumexp(
-                log_probabilities.unsqueeze(0) + previous_ll.unsqueeze(1),
+                epoch_log_probabilities.unsqueeze(0) + previous_ll.unsqueeze(1),
                 dim=-1,
             )
             connected_children = transition_matrix.unsqueeze(-1) != 0
@@ -231,6 +313,4 @@ def calculate_log_likelihood(
         previous_ll = level_ll
     
     return level_ll
-
-
 

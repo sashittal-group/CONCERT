@@ -562,8 +562,9 @@ def _draw_transition_count_likelihood(
         deltas,
         color="#4c72b0",
         marker="o",
-        linewidth=1.2,
-        markersize=4,
+        linewidth=3.6,
+        markersize=5,
+        alpha=1.0,
         zorder=2,
     )
     axis.axhline(0.0, color="#555555", linewidth=0.8, zorder=1)
@@ -571,7 +572,7 @@ def _draw_transition_count_likelihood(
         [selected_count],
         [0.0],
         marker="*",
-        s=90,
+        s=150,
         color="#e5a000",
         edgecolor="#333333",
         linewidth=0.4,
@@ -638,7 +639,7 @@ def _add_panel_label(
     figure.text(
         max(0.005, position.x0 + x_offset),
         position.y1 + y_offset,
-        letter,
+        f"({letter.lower()})",
         fontsize=PANEL_LABEL_SIZE,
         fontweight="bold",
         va="top",
@@ -715,21 +716,21 @@ def generate_figures(
     _preserve_old_panel_outputs(output_dir)
 
     outputs: dict[str, dict[str, Path]] = {}
-    figure, axis = plt.subplots(figsize=(5.0, 4.6))
+    figure, axis = plt.subplots(figsize=(5.0, 4.0))
     draw_panel_a(axis)
     figure.subplots_adjust(left=0.06, right=0.98, top=0.88, bottom=0.08)
     _add_panel_label(figure, axis, "A")
     outputs["panel_A"] = _save_figure(figure, output_dir / "panel_A")
     plt.close(figure)
 
-    figure, axis = plt.subplots(figsize=(6.8, 3.8))
+    figure, axis = plt.subplots(figsize=(6.8, 2.8))
     draw_panel_b(axis, count_likelihood_path, fit)
     figure.subplots_adjust(left=0.18, right=0.98, top=0.84, bottom=0.24)
     _add_panel_label(figure, axis, "B")
     outputs["panel_B"] = _save_figure(figure, output_dir / "panel_B")
     plt.close(figure)
 
-    figure, tree_axis = plt.subplots(figsize=(11.5, 3.8))
+    figure, tree_axis = plt.subplots(figsize=(11.5, 3.3))
     draw_panel_c(tree_axis, tree_segments, fit)
     figure.subplots_adjust(left=0.07, right=0.99, top=0.78, bottom=0.12)
     _add_panel_label(
@@ -742,15 +743,15 @@ def generate_figures(
     outputs["panel_C"] = _save_figure(figure, output_dir / "panel_C")
     plt.close(figure)
 
-    figure, axes = plt.subplots(1, 2, figsize=(12.5, 4.2))
+    figure, axes = plt.subplots(1, 2, figsize=(12.5, 3.7))
     panel_d_axes = tuple(axes)
     draw_panel_d(panel_d_axes[0], panel_d_axes[1], profiles)
-    figure.subplots_adjust(left=0.10, right=0.98, top=0.87, bottom=0.19, wspace=0.42)
+    figure.subplots_adjust(left=0.10, right=0.98, top=0.87, bottom=0.19, wspace=0.30)
     _add_panel_label(figure, panel_d_axes[0], "D")
     outputs["panel_D"] = _save_figure(figure, output_dir / "panel_D")
     plt.close(figure)
 
-    figure = plt.figure(figsize=(18.5, 6.2))
+    figure = plt.figure(figsize=(18.5, 5.2))
     grid = figure.add_gridspec(
         1,
         3,
@@ -759,18 +760,18 @@ def generate_figures(
         right=0.99,
         top=0.92,
         bottom=0.12,
-        wspace=0.28,
+        wspace=0.20,
     )
     left_grid = grid[0, 0].subgridspec(
         2,
         1,
-        height_ratios=(1.15, 0.85),
-        hspace=0.25,
+        height_ratios=(1.15, 0.65),
+        hspace=0.12,
     )
     panel_a_axis = figure.add_subplot(left_grid[0, 0])
     panel_b_axis = figure.add_subplot(left_grid[1, 0])
     panel_c_axis = figure.add_subplot(grid[0, 1])
-    panel_d_grid = grid[0, 2].subgridspec(1, 2, wspace=0.42)
+    panel_d_grid = grid[0, 2].subgridspec(1, 2, wspace=0.30)
     panel_d_growth_axis = figure.add_subplot(panel_d_grid[0, 0])
     panel_d_birth_axis = figure.add_subplot(panel_d_grid[0, 1])
 

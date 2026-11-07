@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import time
 from typing import Callable, Optional
@@ -141,16 +142,57 @@ class PhylodynamicParameters(nn.Module):
         max_birth_rate: float = 1000.0,
         max_death_rate: float = 500.0,
         shared_sampling_rate: bool = False,
+        minimum_self_transition_probability: float | None = None,
+        transition_sources_by_time: list[list[int]] | None = None,
     ):
         super().__init__()
 
         self.num_states = num_states
         self.free_edges = free_edges
         self.shared_sampling_rate = shared_sampling_rate
+        self.minimum_self_transition_probability = (
+            minimum_self_transition_probability
+        )
+        self.maximum_transition_exit_probability = 0.0
+        if minimum_self_transition_probability is not None:
+            if (
+                not math.isfinite(minimum_self_transition_probability)
+                or not 0.0 <= minimum_self_transition_probability < 1.0
+            ):
+                raise ValueError(
+                    "minimum_self_transition_probability must be finite "
+                    "and in [0, 1)"
+                )
+            numerical_margin = min(
+                1e-6,
+                (1.0 - minimum_self_transition_probability) / 2.0,
+            )
+            self.maximum_transition_exit_probability = (
+                1.0
+                - minimum_self_transition_probability
+                - numerical_margin
+            )
         self.transition_times = torch.as_tensor(
             given_transition_times,
             dtype=torch.float64,
             device=device,
+        )
+        if transition_sources_by_time is not None and (
+            len(transition_sources_by_time) != len(given_transition_times)
+            or any(
+                len(set(sources)) != len(sources)
+                or any(not 0 <= source < num_states for source in sources)
+                for sources in transition_sources_by_time
+            )
+        ):
+            raise ValueError(
+                "transition_sources_by_time must contain valid, unique sources "
+                "for every transition time"
+            )
+        self.transition_sources_by_time = (
+            None
+            if transition_sources_by_time is None
+            else tuple(tuple(sources) for sources in transition_sources_by_time)
         )
         self.device_ = device
 
@@ -336,6 +378,14 @@ class PhylodynamicParameters(nn.Module):
                 "have shape "
                 "(num_states, num_states)"
             )
+        if minimum_self_transition_probability is not None and (
+            not torch.isfinite(initial_Q).all()
+            or torch.any(initial_Q < 0.0)
+        ):
+            raise ValueError(
+                "initial_transition_probabilities must be finite and "
+                "nonnegative when a self-transition constraint is enabled"
+            )
 
         # ----------------------------------------------------
         # Raw transition parameters.
@@ -353,26 +403,60 @@ class PhylodynamicParameters(nn.Module):
 
         # Diagonal
         for i in range(num_states):
-
-            transition_raw.append(
-                torch.log(
-                    torch.clamp(
-                        initial_Q[i, i],
-                        min=1e-12,
-                    )
+            outgoing_edges = [
+                (u, v) for u, v in free_edges if u == i
+            ]
+            if minimum_self_transition_probability is None:
+                initial_raw = torch.log(
+                    torch.clamp(initial_Q[i, i], min=1e-12)
                 )
-            )
+            else:
+                outgoing_mass = (
+                    torch.stack(
+                        [initial_Q[i, target] for _, target in outgoing_edges]
+                    )
+                    .sum()
+                    if outgoing_edges
+                    else initial_Q.new_zeros(())
+                )
+                row_mass = initial_Q[i, i] + outgoing_mass
+                if not torch.isfinite(row_mass) or row_mass <= 0:
+                    raise ValueError(
+                        "Each initial transition-probability row must have "
+                        "positive finite mass"
+                    )
+                exit_fraction = (
+                    outgoing_mass
+                    / row_mass
+                    / self.maximum_transition_exit_probability
+                )
+                exit_fraction = torch.clamp(
+                    exit_fraction,
+                    min=1e-8,
+                    max=1.0 - 1e-8,
+                )
+                initial_raw = inverse_sigmoid(exit_fraction)
+            transition_raw.append(initial_raw)
 
         # Free edges
         for i, j in free_edges:
-
-            transition_raw.append(
-                torch.log(
-                    torch.clamp(
-                        initial_Q[i, j],
-                        min=1e-12,
+            if minimum_self_transition_probability is None:
+                edge_weight = initial_Q[i, j]
+            else:
+                outgoing_edges = [
+                    (u, v) for u, v in free_edges if u == i
+                ]
+                outgoing_mass = torch.stack(
+                    [initial_Q[i, target] for _, target in outgoing_edges]
+                ).sum()
+                if outgoing_mass > 0:
+                    edge_weight = initial_Q[i, j] / outgoing_mass
+                else:
+                    edge_weight = initial_Q.new_tensor(
+                        1.0 / len(outgoing_edges)
                     )
-                )
+            transition_raw.append(
+                torch.log(torch.clamp(edge_weight, min=1e-12))
             )
 
         self.transition_raw = nn.Parameter(torch.stack(transition_raw))
@@ -432,6 +516,52 @@ class PhylodynamicParameters(nn.Module):
         rows = []
 
         for i in range(S):
+            if self.minimum_self_transition_probability is not None:
+                outgoing_edge_indices = [
+                    k for k, (source, _) in enumerate(self.free_edges)
+                    if source == i
+                ]
+                if not outgoing_edge_indices:
+                    row = torch.zeros(
+                        S,
+                        dtype=self.transition_raw.dtype,
+                        device=self.device_,
+                    )
+                    row[i] = 1.0
+                    rows.append(row)
+                    continue
+
+                exit_probability = (
+                    self.maximum_transition_exit_probability
+                    * torch.sigmoid(diag_raw[i])
+                )
+                edge_logits = torch.stack(
+                    [edge_raw[k] for k in outgoing_edge_indices]
+                )
+                edge_probabilities = (
+                    exit_probability * torch.softmax(edge_logits, dim=0)
+                )
+                columns = torch.tensor(
+                    [
+                        i,
+                        *(
+                            self.free_edges[k][1]
+                            for k in outgoing_edge_indices
+                        ),
+                    ],
+                    dtype=torch.long,
+                    device=self.device_,
+                )
+                probabilities = torch.cat(
+                    ((1.0 - exit_probability).reshape(1), edge_probabilities)
+                )
+                row = torch.zeros(
+                    S,
+                    dtype=probabilities.dtype,
+                    device=self.device_,
+                ).scatter(0, columns, probabilities)
+                rows.append(row)
+                continue
 
             logits = [diag_raw[i]]
 
@@ -487,6 +617,7 @@ def calculate_total_log_likelihood(
     datastructures: list[dict],
     static_transition_times: list[float] | None = None,
     normalize_root_likelihood: bool = False,
+    transition_sources_by_time: list[list[int]] | None = None,
 ) -> torch.Tensor:
     """
     Calculate the total log likelihood across all trees.
@@ -499,6 +630,8 @@ def calculate_total_log_likelihood(
     sampling_probabilities = params.sampling_probabilities
     transition_probabilities = params.transition_probabilities
     transition_times = params.transition_times
+    if transition_sources_by_time is None:
+        transition_sources_by_time = params.transition_sources_by_time
 
     if static_transition_times is None:
         static_transition_times = transition_times.detach().cpu().tolist()
@@ -518,6 +651,7 @@ def calculate_total_log_likelihood(
         transition_probabilities,
         transition_times,
         root_times=root_times,
+        transition_sources_by_time=transition_sources_by_time,
     )
 
     # print(f"U_result: {U_result}")
@@ -541,6 +675,7 @@ def calculate_total_log_likelihood(
             sampling_probabilities,
             U_result.Cs,
             static_transition_times,
+            transition_sources_by_time=transition_sources_by_time,
         )
 
         LL = LL + result[0, 0]
@@ -630,6 +765,7 @@ class LikelihoodModel(nn.Module):
         self.datastructures = datastructures
         self.normalize_root_likelihood = normalize_root_likelihood
         self.static_transition_times = params.transition_times.detach().cpu().tolist()
+        self.transition_sources_by_time = params.transition_sources_by_time
 
     def forward(self):
 
@@ -669,6 +805,8 @@ def optimize_parameters(
     device: Optional[torch.device | str] = None,
     normalize_root_likelihood: bool = False,
     shared_sampling_rate: bool = False,
+    minimum_self_transition_probability: float | None = None,
+    transition_sources_by_time: list[list[int]] | None = None,
 ):
 
     total_start = time.perf_counter()
@@ -705,6 +843,10 @@ def optimize_parameters(
         initial_transition_probabilities=(initial_transition_probabilities),
         given_transition_times=(given_transition_times),
         shared_sampling_rate=shared_sampling_rate,
+        minimum_self_transition_probability=(
+            minimum_self_transition_probability
+        ),
+        transition_sources_by_time=transition_sources_by_time,
     ).to(device)
     _timed_log("parameter construction", total_start, device)
 
@@ -737,6 +879,7 @@ def optimize_parameters(
             trees=trees,
             datastructures=datastructure,
             normalize_root_likelihood=normalize_root_likelihood,
+            transition_sources_by_time=transition_sources_by_time,
         )
 
         return OptimizationResult(

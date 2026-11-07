@@ -214,6 +214,7 @@ def _fit_parameters(
     normalize_root_likelihood: bool,
     logfile: str | None,
     verbose: bool,
+    minimum_self_transition_probability: float | None = None,
 ):
     datastructures = _build_datastructures(
         trees, transition_times, num_states, verbose=verbose
@@ -251,6 +252,9 @@ def _fit_parameters(
         patience=patience,
         device=device,
         normalize_root_likelihood=normalize_root_likelihood,
+        minimum_self_transition_probability=(
+            minimum_self_transition_probability
+        ),
         **initial_parameters,
     )
     likelihood = float(result.log_likelihood.detach().item())
@@ -283,6 +287,7 @@ def optimize_progressive_joint_transition_times(
     logfile: str | None = None,
     checkpoint_directory: Path | None = None,
     verbose: bool = False,
+    minimum_self_transition_probability: float | None = None,
 ):
     if num_transition_times < 1:
         raise ValueError("num_transition_times must be positive")
@@ -314,6 +319,9 @@ def optimize_progressive_joint_transition_times(
             max_attempts=initialization_attempts,
             fixed_sampling_probability=fixed_sampling_probability,
             verbose=verbose,
+            minimum_self_transition_probability=(
+                minimum_self_transition_probability
+            ),
         )
     else:
         transition_times = sorted(float(time) for time in initial_transition_times)
@@ -345,6 +353,9 @@ def optimize_progressive_joint_transition_times(
             normalize_root_likelihood=normalize_root_likelihood,
             fixed_sampling_probability=fixed_sampling_probability,
             verbose=verbose,
+            minimum_self_transition_probability=(
+                minimum_self_transition_probability
+            ),
         )
         if not math.isfinite(initial_likelihood):
             raise FloatingPointError(
@@ -368,6 +379,9 @@ def optimize_progressive_joint_transition_times(
         normalize_root_likelihood=normalize_root_likelihood,
         logfile=None,
         verbose=verbose,
+        minimum_self_transition_probability=(
+            minimum_self_transition_probability
+        ),
     )
 
     initial_count = len(transition_times)
@@ -383,6 +397,9 @@ def optimize_progressive_joint_transition_times(
                 fixed_sampling_probability=fixed_sampling_probability,
                 normalize_root_likelihood=normalize_root_likelihood,
                 verbose=verbose,
+                minimum_self_transition_probability=(
+                    minimum_self_transition_probability
+                ),
             )
 
         transition_times, likelihood = _maximize_coordinate(
@@ -420,6 +437,9 @@ def optimize_progressive_joint_transition_times(
             )
         ),
         verbose=verbose,
+        minimum_self_transition_probability=(
+            minimum_self_transition_probability
+        ),
     )
     if checkpoint_directory is not None:
         _write_count_checkpoint(
@@ -441,6 +461,9 @@ def optimize_progressive_joint_transition_times(
                 fixed_sampling_probability=fixed_sampling_probability,
                 normalize_root_likelihood=normalize_root_likelihood,
                 verbose=verbose,
+                minimum_self_transition_probability=(
+                    minimum_self_transition_probability
+                ),
             )
 
         transition_times, likelihood = _add_transition_at_maximum(
@@ -469,6 +492,9 @@ def optimize_progressive_joint_transition_times(
             normalize_root_likelihood=normalize_root_likelihood,
             logfile=None,
             verbose=verbose,
+            minimum_self_transition_probability=(
+                minimum_self_transition_probability
+            ),
         )
 
         for coordinate in range(count):
@@ -483,6 +509,9 @@ def optimize_progressive_joint_transition_times(
                     fixed_sampling_probability=fixed_sampling_probability,
                     normalize_root_likelihood=normalize_root_likelihood,
                     verbose=verbose,
+                    minimum_self_transition_probability=(
+                        minimum_self_transition_probability
+                    ),
                 )
 
             transition_times, likelihood = _maximize_coordinate(
@@ -521,6 +550,9 @@ def optimize_progressive_joint_transition_times(
                 )
             ),
             verbose=verbose,
+            minimum_self_transition_probability=(
+                minimum_self_transition_probability
+            ),
         )
         if checkpoint_directory is not None:
             _write_count_checkpoint(

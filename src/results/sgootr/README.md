@@ -70,13 +70,16 @@ By default, the figure uses the shared-source two-PT->LN fit
 `S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857`,
 its parameter profile tables and colored tree, plus the PT->LN event-count
 likelihood analysis. The generator writes panels A-D and a composite in PNG,
-PDF, and SVG under `data/sgootr/figures/figure_generator/`. The composite has
-three columns: panels A and B are stacked in the left column, panel C occupies
-the middle column, and panel D occupies the right column.
+PDF, and SVG under `data/sgootr/figures/figure_generator/`. Panel labels use
+bold lowercase parenthesized letters, and the plots use reduced heights and
+tighter spacing; panel (b) is shorter still. The composite has three columns:
+panels A and B are stacked in the left column, panel C occupies the middle
+column, and panel D occupies the right column.
 
 Panel A shows the transition graph without probability values. Panel B plots
 the log-likelihood change for one through five PT->LN transition times relative
-to the selected two-event fit, marked with a star. Panel C contains the
+to the selected two-event fit, with a thicker, fully opaque curve and the
+selected fit marked with a star. Panel C contains the
 CRC11 state-colored tree, fitted event-time guides, and a compact NC/PT/LN
 color map; its time axis is labeled `Time` with five major ticks. Panel D shows
 the net-growth and relative-birth profile intervals side by side, with equally
