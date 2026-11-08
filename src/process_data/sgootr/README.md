@@ -1,5 +1,11 @@
 # SGOOTR tree processing
 
+> **Workflow status:** The standard UPGMA target
+> `data/sgootr/processed/upgma/tree.nwk` remains in the root `Snakefile`.
+> Snakemake commands below for alternative preprocessing and inference targets
+> refer to auxiliary rules that have been removed; their Python entry points
+> remain in the repository for those separate analyses.
+
 Run the modular pipeline from the repository root:
 
 ```bash
@@ -155,8 +161,8 @@ existing datasets, preprocess its profile data and render the figures:
 
 ```bash
 snakemake --cores 1 \
-  src/results/sgootr/data/upgma_min_subtracted_height_1/parameter_value_ranges.csv \
-  src/results/sgootr/data/upgma_min_subtracted_height_1_transition_cut_upgma/parameter_value_ranges.csv
+  outputs/sgootr/profiles/upgma_min_subtracted_height_1/parameter_value_ranges.csv \
+  outputs/sgootr/profiles/upgma_min_subtracted_height_1_transition_cut_upgma/parameter_value_ranges.csv
 .venv/bin/python -m src.results.sgootr.plot \
   --config src/results/sgootr/config.yaml
 ```

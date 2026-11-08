@@ -121,7 +121,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("data/troupe/TLS/fixed_sampling_0.1/profiles/figures"),
+        default=Path("outputs/tls/fixed_sampling_0.1/profile_comparison"),
     )
     parser.add_argument(
         "--config",

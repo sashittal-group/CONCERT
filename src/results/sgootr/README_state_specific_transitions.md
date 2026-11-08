@@ -31,6 +31,7 @@ To search S15 schedules with one NC→PT epoch and two PT→LN epochs, run:
 .venv/bin/python -m src.results.sgootr.state_specific_schedule_search \
   --input-dir data/sgootr/all_trees/combined_inference/S15_CRC11_transition_chain_input \
   --output-dir data/sgootr/all_trees/combined_inference/S15_CRC11_state_specific_3transition_shared_source_search \
+  --summary-dir outputs/sgootr/state_specific_schedule_search/S15_CRC11_state_specific_3transition_shared_source_search \
   --workers 4
 ```
 
@@ -50,18 +51,21 @@ shared-source two-time result is available, run:
 ```bash
 .venv/bin/python -m src.results.sgootr.transition_count_analysis \
   --input-dir data/sgootr/all_trees/combined_inference/S10_CRC04_transition_chain_input \
-  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC04_ptln_transition_count_analysis
+  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC04_ptln_transition_count_analysis \
+  --summary-dir outputs/sgootr/transition_count_analysis/S10_CRC04_ptln_transition_count_analysis
 ```
 
 The analysis keeps one NC→PT event and searches its time along with the PT→LN
 event times. It searches counts 1 through 5, fitting all model parameters for
 each candidate schedule. If `--existing-two-count-inference` is supplied, the
 two-time result is reused instead of searching count 2. It writes likelihood
-and schedule summaries plus PNG/PDF likelihood plots; each newly searched
-count also saves its best inference result. The input directory name sets the
-cohort/CRC label in the plot.
+and schedule summaries plus PNG/PDF likelihood plots under the summary
+directory; each newly searched count saves its full best inference result
+under `data/`. The input directory name sets the cohort/CRC label in the plot.
 
-The same command supports other single-tree S10 or S15 CRC input directories.
+Full schedule fits remain under `data/`; ranked schedules and cohort summaries
+are written under `outputs/sgootr/state_specific_schedule_search/`. The same
+command supports other single-tree S10 or S15 CRC input directories.
 
 To profile the likelihood by moving each event time individually while holding
 the other event times and every fitted rate, sampling probability, and transition
@@ -71,7 +75,7 @@ probability fixed, run:
 .venv/bin/python -m src.results.sgootr.transition_time_profile \
   --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
   --inference data/sgootr/all_trees/combined_inference/S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt \
-  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC11_ptln_transition_count_analysis/ptln_2/fixed_parameter_time_profile
+  --output-dir outputs/sgootr/CRC11/fixed_parameter_time_profile
 ```
 
 The script checks that the fixed-parameter likelihood at the saved event times
@@ -85,14 +89,16 @@ Generate the matching CRC11 plots for either state-specific fit with:
 ```bash
 .venv/bin/python -m src.results.sgootr.plot_state_specific_transitions \
   data/sgootr/all_trees/combined_inference/S10_CRC11_state_specific_transition_test/inference.txt \
-  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input
+  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
+  --output-dir outputs/sgootr/CRC11/state_specific_transition_test
 ```
 
 Use the corresponding `S15_...` paths for S15. The script verifies that its
 likelihood calculation matches the saved fit before writing any plots. It
-creates `figures/CRC11_state_coloring.{pdf,png}`,
+creates `outputs/sgootr/CRC11/state_specific_transition_test/figures/CRC11_state_coloring.{pdf,png}`,
 `figures/plot_1_net_growth_scaled_birth_relative_birth_profiles.{pdf,svg,png}`,
 `figures/plot_3_relative_sampling_probability_profile_intervals_by_tree.{pdf,svg,png}`,
-and `tree_with_inferred_transition_times.png` beside the inference file. Profile
-tables are written to `profiles/data/`. The transition times remain fixed at
-the values used by the fit; this command does not search for new times.
+and `tree_with_inferred_transition_times.png` under the selected output
+directory. Profile tables are written to its `profiles/data/` folder. The
+transition times remain fixed at the values used by the fit; this command does
+not search for new times.

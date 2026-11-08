@@ -1,9 +1,10 @@
 tls_composite:
   data_root: ../../../data/troupe
   fixed_sampling_probability: 0.1
-  inference_root: fixed_sampling_0.1/inference
-  preprocessing_root: fixed_sampling_0.1/profiles
-  figure_root: fixed_sampling_0.1/figures
+  inference_root: ../../../data/troupe
+  inference_subdirectory: fixed_sampling_0.1
+  preprocessing_root: ../../../outputs/tls/fixed_sampling_0.1/profiles
+  figure_root: ../../../outputs/tls/fixed_sampling_0.1/figures
   datasets:
     - TLS
     - TLSC

@@ -335,7 +335,7 @@ def main() -> None:
     )
     arguments = parser.parse_args()
     dataset_root = Path("data/troupe") / arguments.dataset
-    coloring_dir = dataset_root / "fixed_sampling_0.1" / "state_coloring"
+    coloring_dir = Path("outputs/tls/state_coloring") / arguments.dataset
     state_data_path = arguments.state_data or (coloring_dir / OUTPUT_FILENAME)
     input_dir = arguments.input_dir or dataset_root / "subtrees_kept_states"
     output_dir = arguments.output_dir or coloring_dir / "plots"

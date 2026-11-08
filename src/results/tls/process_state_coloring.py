@@ -499,10 +499,7 @@ def main() -> None:
         Path("data/troupe") / arguments.dataset / "subtrees_kept_states"
     )
     output_dir = arguments.output_dir or (
-        Path("data/troupe")
-        / arguments.dataset
-        / "fixed_sampling_0.1"
-        / "state_coloring"
+        Path("outputs/tls/state_coloring") / arguments.dataset
     )
     process_dataset(
         arguments.dataset,

@@ -64,16 +64,18 @@ class ProfilePanelData:
 def load_profile_panel_data(
     data_root: Path,
     output_dir: Path,
+    profiles_root: Path | None = None,
 ) -> ProfilePanelData:
     config_path = Path(__file__).resolve().parents[1] / "config_fixed_sampling_0.1.yaml"
     base_config = load_config(config_path)
+    profiles_root = profiles_root or base_config.preprocessing_root
     ranges_by_dataset = {}
     metadata_by_dataset = {}
     parameter_sets = []
     likelihood_fractions = []
 
     for dataset_id, dataset in zip(PROFILE_DATASET_IDS, DATASETS):
-        profile_dir = data_root / dataset / "fixed_sampling_0.1" / "profiles"
+        profile_dir = profiles_root / dataset
         ranges, metadata = _read_profile_tables(profile_dir, dataset)
         ranges_by_dataset[dataset_id] = ranges
         metadata_by_dataset[dataset_id] = metadata

@@ -202,9 +202,10 @@ def make_transition_bin_edges(
 def _load_dataset_segments(
     dataset: str,
     data_root: Path,
+    output_root: Path,
     state_names: tuple[str, ...],
 ) -> tuple[pd.DataFrame, list[float]]:
-    coloring_dir = data_root / dataset / "fixed_sampling_0.1" / "state_coloring"
+    coloring_dir = output_root / dataset
     metadata_path = coloring_dir / "metadata.json"
     state_data_path = coloring_dir / OUTPUT_FILENAME
     metadata = json.loads(metadata_path.read_text())
@@ -336,11 +337,17 @@ def _plot_proportions(
 def generate_plots(
     data_root: Path = Path("data/troupe"),
     dpi: int = 180,
+    output_root: Path = Path("outputs/tls/state_coloring"),
 ) -> dict[str, Path]:
     state_names = CELL_STATE_ORDER
     datasets = ("TLS", "TLSC")
     loaded_data = {
-        dataset: _load_dataset_segments(dataset, data_root, state_names)
+        dataset: _load_dataset_segments(
+            dataset,
+            data_root,
+            output_root,
+            state_names,
+        )
         for dataset in datasets
     }
     time_min = min(
@@ -363,8 +370,7 @@ def generate_plots(
         )
         counts = count_segments_by_time(segments, bin_edges, state_names)
         proportions = normalize_state_counts(counts, state_names)
-        coloring_dir = data_root / dataset / "fixed_sampling_0.1" / "state_coloring"
-        output_dir = coloring_dir / "plots"
+        output_dir = output_root / dataset / "plots"
         output_dir.mkdir(parents=True, exist_ok=True)
         counts.to_csv(output_dir / COUNTS_FILENAME, index=False)
         proportions.to_csv(output_dir / PROPORTIONS_FILENAME, index=False)
@@ -388,9 +394,18 @@ def main() -> None:
         )
     )
     parser.add_argument("--data-root", type=Path, default=Path("data/troupe"))
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path("outputs/tls/state_coloring"),
+    )
     parser.add_argument("--dpi", type=int, default=180)
     arguments = parser.parse_args()
-    generate_plots(arguments.data_root, dpi=arguments.dpi)
+    generate_plots(
+        arguments.data_root,
+        dpi=arguments.dpi,
+        output_root=arguments.output_root,
+    )
 
 
 if __name__ == "__main__":

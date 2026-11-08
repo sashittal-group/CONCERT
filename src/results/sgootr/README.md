@@ -1,5 +1,11 @@
 # SGOOTR parameter profiles
 
+> **Workflow status:** The profile and fixed-sampling sensitivity analyses in
+> this guide are auxiliary to the manuscript. Their Snakemake rules have been
+> removed from the root `Snakefile`; the Snakemake commands below are retained
+> as historical references and no longer run as written. The CRC11 manuscript
+> figure workflow is documented later in this file.
+
 The SGOOTR profile workflow reuses the shared profile grid, likelihood-threshold
 interval calculation, and TLS figure renderer. It profiles one parameter at a
 time around each fit and uses the stem-free crown likelihood with root state 0
@@ -8,13 +14,13 @@ known, conditioning on both daughter lineages surviving.
 Run either profile target, or use the default workflow to generate both:
 
 ```bash
-snakemake --cores 1 src/results/sgootr/figures/SGOOTR_composite_sensitivity_compact.pdf
+snakemake --cores 1 outputs/sgootr/figures/SGOOTR_composite_sensitivity_compact.pdf
 snakemake --cores 1
 ```
 
 The workflow writes five matching figure types in PDF and SVG under
-`src/results/sgootr/figures/` and profile tables under
-`src/results/sgootr/data/`. The middle panel of the composite figure shows the
+`outputs/sgootr/figures/` and profile tables under
+`outputs/sgootr/profiles/`. The middle panel of the composite figure shows the
 individual transition probabilities `NC->PT` and `PT->LN`.
 Composite profile figures use a tighter layout with narrower panels and wider
 boxes; state-specific profile boxes are colored consistently by cell type (NC,
@@ -27,9 +33,10 @@ configured tree variants and regenerate their profiles and figures, run:
 snakemake --cores 1 sgootr_fixed_sampling_01
 ```
 
-These results are isolated under
-`src/results/sgootr/fixed_sampling_0.1/`; the existing shared-sampling
-inference results and figures are left unchanged.
+The full inference outputs stay under
+`data/sgootr/inference/<dataset>/fixed_sampling_0.1/`; profile tables and
+figures are under `outputs/sgootr/fixed_sampling_0.1/`. Existing
+shared-sampling inference results remain unchanged.
 
 ## Combined S10/S15 profiles
 
@@ -62,7 +69,8 @@ Generate the four-panel S10 CRC11 manuscript figure with:
 ```bash
 .venv/bin/python -m src.results.sgootr.plot_state_specific_transitions \
   data/sgootr/all_trees/combined_inference/S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt \
-  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input
+  --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
+  --output-dir outputs/sgootr/CRC11/selected_fit
 .venv/bin/python -m src.results.sgootr.figure_generator
 ```
 
@@ -70,7 +78,7 @@ By default, the figure uses the shared-source two-PT->LN fit
 `S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857`,
 its parameter profile tables and colored tree, plus the PT->LN event-count
 likelihood analysis. The generator writes panels A-D and a composite in PNG,
-PDF, and SVG under `data/sgootr/figures/figure_generator/`. Panel labels use
+PDF, and SVG under `outputs/sgootr/CRC11/manuscript_figure/`. Panel labels use
 bold lowercase parenthesized letters, and the plots use reduced heights and
 tighter spacing; panel (b) is shorter still. The composite has three columns:
 panels A and B are stacked in the left column, panel C occupies the middle
@@ -91,13 +99,13 @@ and whiskers show `exp(-1)`. The older A-C panels and composite are preserved as
 three formats. Profile intervals are also written to
 `panel_D_profile_intervals.csv`.
 
-The point estimates shown by the generator come from
-`S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt`.
+The point estimates shown by the generator come from the full inference fit in
+`data/sgootr/all_trees/combined_inference/S10_CRC11_state_specific_3transition_shared_source_search/schedule_3857/inference.txt`.
 Its `birth:` and `death:` vectors give net growth as birth minus death, while
-the fitted birth rates give relative birth rates against NC. The profile tables
-in the same schedule directory contain the likelihood profiles derived from
-that fit. These are the project's SGOOTR inference results for patient CRC11,
-S10 region; they are not parameter estimates copied from the SGOOTR publication.
+the fitted birth rates give relative birth rates against NC. The selected-fit
+profile tables are written under `outputs/sgootr/CRC11/selected_fit/`. These
+are the project's SGOOTR inference results for patient CRC11, S10 region; they
+are not parameter estimates copied from the SGOOTR publication.
 
 ## CRC11 genetic transition-schedule search
 
@@ -119,6 +127,7 @@ Run the search with:
   --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
   --transition-edges-file data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input/transition_edges.txt \
   --output-dir data/sgootr/all_trees/combined_inference/S10_CRC11_genetic_schedule_search \
+  --summary-dir outputs/sgootr/schedule_search/S10_CRC11_genetic_schedule_search \
   --workers 10 --seed 42
 ```
 
@@ -128,10 +137,12 @@ Use a separate output directory for this constrained run.
 
 Every new schedule rebuilds the CRC11 tree cuts and optimizes the other
 parameters in a separate `main2.py` process; fits within a cohort run in
-parallel. The worker count is capped at the available CPU count. The
-`schedule_search_summary.csv` ranks every unique evaluated schedule and records
-failed fits; `cohort_summary.csv` records generation-level progress, and
-`best_schedule.txt` contains the best successful schedule. Runs are
+parallel. The worker count is capped at the available CPU count. Full fits are stored in
+`data/`; the `schedule_search_summary.csv` in
+`outputs/sgootr/schedule_search/S10_CRC11_genetic_schedule_search/` ranks every
+unique evaluated schedule and records failed fits. `cohort_summary.csv` records
+generation-level progress, and `best_schedule.txt` contains the best successful
+schedule. Runs are
 reproducible with `--seed`. The options `--cohorts`, `--cohort-size`, and
 `--elite-count` can adjust the corresponding limits. Subsequent cohorts retain
 the best schedules, use tournament-selected crossover, add random schedules
@@ -145,16 +156,17 @@ To generate parameter-profile figures for the best genetic-search fit, run:
 .venv/bin/python -m src.results.sgootr.profile_combined_inference \
   data/sgootr/all_trees/combined_inference/S10_CRC11_genetic_schedule_search/schedule_4545/inference.txt \
   --input-dir data/sgootr/all_trees/combined_inference/S10_CRC11_transition_chain_input \
-  --output-dir data/sgootr/all_trees/combined_inference/S10_CRC11_genetic_schedule_search/schedule_4545/tight_drop_analysis/profiles \
+  --output-dir outputs/sgootr/CRC11/genetic_schedule_search/schedule_4545/tighter_drop_analysis/profiles \
   --transition-times-only --likelihood-drops 0.1 0.25 0.5 1.0
 ```
 
 The profile baseline is checked against the fitted likelihood. Profile tables
-are written to `schedule_4545/tight_drop_analysis/profiles/data/`, and
+are written to `outputs/sgootr/CRC11/genetic_schedule_search/schedule_4545/tighter_drop_analysis/profiles/data/`, and
 parameter/transition and ratio figures to
-`schedule_4545/tight_drop_analysis/profiles/figures/`. The numbered composite
-growth/rate and relative-sampling interval figures are written to
-`schedule_4545/tight_drop_analysis/figures/`. `--likelihood-drops` overrides
+`outputs/sgootr/CRC11/genetic_schedule_search/schedule_4545/tighter_drop_analysis/profiles/figures/`.
+The numbered composite growth/rate and relative-sampling interval figures are
+written under `outputs/sgootr/CRC11/genetic_schedule_search/schedule_4545/tighter_drop_analysis/figures/`.
+`--likelihood-drops` overrides
 the configured profile thresholds for this run only; the ratio figures mark
 the reference ratio of 1.
 

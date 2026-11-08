@@ -495,7 +495,7 @@ def main() -> None:
         "--output-dir",
         type=Path,
         default=None,
-        help="Defaults to <data-dir>/plots.",
+        help="Defaults to outputs/simulation/<dataset>/figures.",
     )
     parser.add_argument(
         "--progressive-transition-times",
@@ -505,7 +505,8 @@ def main() -> None:
         help="Plot completed progressive inferences with this many transition times.",
     )
     args = parser.parse_args()
-    output_dir = args.output_dir or args.data_dir / "plots"
+    dataset = args.data_dir.name
+    output_dir = args.output_dir or Path("outputs/simulation") / dataset / "figures"
     if args.progressive_transition_times is None:
         plot_completed_inferences(args.data_dir, output_dir)
     else:

@@ -34,15 +34,30 @@ DEFAULT_FIT = (
     / "schedule_3857"
     / "inference.txt"
 )
-DEFAULT_FIGURES_DIR = DEFAULT_FIT.parent / "figures"
+DEFAULT_FIGURES_DIR = (
+    REPOSITORY_ROOT / "outputs" / "sgootr" / "CRC11" / "selected_fit" / "figures"
+)
 DEFAULT_TREE_SEGMENTS = DEFAULT_FIGURES_DIR / "CRC11_state_segments.csv"
-DEFAULT_PROFILES_DIR = DEFAULT_FIT.parent / "profiles" / "data"
+DEFAULT_PROFILES_DIR = (
+    REPOSITORY_ROOT
+    / "outputs"
+    / "sgootr"
+    / "CRC11"
+    / "selected_fit"
+    / "profiles"
+    / "data"
+)
 DEFAULT_COUNT_LIKELIHOOD = (
-    COMBINED_INFERENCE_DIR
+    REPOSITORY_ROOT
+    / "outputs"
+    / "sgootr"
+    / "transition_count_analysis"
     / "S10_CRC11_ptln_transition_count_analysis"
     / "likelihood_by_ptln_transition_count.csv"
 )
-DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "data" / "sgootr" / "figures" / "figure_generator"
+DEFAULT_OUTPUT_DIR = (
+    REPOSITORY_ROOT / "outputs" / "sgootr" / "CRC11" / "manuscript_figure"
+)
 
 FORMATS = ("png", "pdf", "svg")
 STATE_NAMES = ("NC", "PT", "LN")

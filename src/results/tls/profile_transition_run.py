@@ -234,7 +234,22 @@ def main() -> None:
         arguments.input_dir
         or arguments.inference.parent.parent / "subtrees_kept_states"
     )
-    output_dir = arguments.output_dir or arguments.inference.parent / "profiles"
+    dataset = next(
+        (
+            parent.name
+            for parent in arguments.inference.parents
+            if parent.name in {"TLS", "TLSC"}
+        ),
+        None,
+    )
+    if dataset is None:
+        raise ValueError(
+            f"Could not determine whether {arguments.inference} belongs to TLS or TLSC."
+        )
+    output_dir = arguments.output_dir or (
+        Path("outputs/tls/fixed_sampling_0.1/transition_profiles")
+        / dataset
+    )
     profile_transition_run(
         arguments.inference,
         input_dir,

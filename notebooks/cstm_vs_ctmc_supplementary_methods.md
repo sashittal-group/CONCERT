@@ -16,7 +16,7 @@ P(\Delta t)=
 
 and the transition-time grid was constructed as `[0, 1e-15]` followed by \(k\Delta t\) for \(k=1,\ldots,N-1\). The CSTM likelihoods were calculated with the closed-form routines in [`src/cstm_vs_ctmc.py`](../src/cstm_vs_ctmc.py).
 
-The notebook loads one reference log-likelihood per tree from `data/simulation/bdt_ctmc/emperical_proof_data/tree_likelihoods.txt` and the eight CSTM log-likelihoods per tree from `tree_likelihoods_cstm.txt`. In the notebook, the reference values are held in a variable named `ctmc_likelihoods`; the final figure labels the reference as MTBD.
+The notebook loads one reference log-likelihood per tree from `outputs/supplementary/bdt_ctmc/tree_likelihoods.txt` and the eight CSTM log-likelihoods per tree from `outputs/supplementary/bdt_ctmc/tree_likelihoods_cstm.txt`. In the notebook, the reference values are held in a variable named `ctmc_likelihoods`; the final figure labels the reference as MTBD.
 
 ## Error summary and figure
 

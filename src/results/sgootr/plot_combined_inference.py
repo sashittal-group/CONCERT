@@ -481,7 +481,9 @@ def plot_combined_inference(
         birth * sample
         for birth, sample in zip(estimates["birth"], sampling)
     ]
-    output_dir = output_dir or result_path.parent / "figures"
+    output_dir = output_dir or (
+        Path("outputs/sgootr/combined_inference") / result_path.parent.name
+    )
     base = result_path.stem
 
     with matplotlib.rc_context(

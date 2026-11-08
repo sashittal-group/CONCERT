@@ -58,7 +58,14 @@ matplotlib.rcParams.update(
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = REPOSITORY_ROOT / "data" / "troupe"
-DEFAULT_OUTPUT_DIR = DATA_ROOT / "figures" / "figure_generator"
+DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "outputs" / "tls" / "figure_generator"
+PROFILE_ROOT = (
+    REPOSITORY_ROOT
+    / "outputs"
+    / "tls"
+    / "fixed_sampling_0.1"
+    / "profiles"
+)
 STATES = ("NMPs", "Somite", "NeuralTube")
 STATE_COLORS = CELL_TYPE_COLORS
 NODE_POSITIONS = {
@@ -580,7 +587,11 @@ def generate_figures(
     tls_fit = load_fit("TLS", data_root)
     tlsc_fit = load_fit("TLSC", data_root)
     maximum_net_growth, maximum_transition_rate = _figure_scales(tls_fit, tlsc_fit)
-    profile_panel_data = load_profile_panel_data(data_root, output_dir)
+    profile_panel_data = load_profile_panel_data(
+        data_root,
+        output_dir,
+        PROFILE_ROOT,
+    )
     runs_by_dataset = load_convergence_data(data_root)
     panel_a_image = load_panel_a_image()
 

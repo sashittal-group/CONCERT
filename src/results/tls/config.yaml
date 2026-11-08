@@ -2,8 +2,8 @@ nseeds: 32
 
 tls_composite:
   data_root: ../../../data/troupe
-  preprocessing_root: data
-  figure_root: figures
+  preprocessing_root: ../../../outputs/tls/profiles
+  figure_root: ../../../outputs/tls/figures
   datasets:
     - TLS
     - TLSC

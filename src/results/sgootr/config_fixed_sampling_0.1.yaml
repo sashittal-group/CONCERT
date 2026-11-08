@@ -1,8 +1,9 @@
 sgootr_profiles:
   data_root: ../../../data/sgootr/processed
-  inference_root: fixed_sampling_0.1/inference
-  preprocessing_root: fixed_sampling_0.1/data
-  figure_root: fixed_sampling_0.1/figures
+  inference_root: ../../../data/sgootr/inference
+  inference_subdirectory: fixed_sampling_0.1
+  preprocessing_root: ../../../outputs/sgootr/fixed_sampling_0.1/profiles
+  figure_root: ../../../outputs/sgootr/fixed_sampling_0.1/figures
   datasets:
     - birth_shifted_min_branch
     - transition_anchored

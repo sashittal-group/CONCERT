@@ -107,6 +107,7 @@ def run_state_specific_schedule_search(
     output_dir: Path,
     workers: int = 4,
     *,
+    summary_dir: Path | None = None,
     cohorts: int = DEFAULT_MAX_COHORTS,
     cohort_size: int = DEFAULT_COHORT_SIZE,
     elite_count: int = DEFAULT_ELITE_COUNT,
@@ -122,6 +123,12 @@ def run_state_specific_schedule_search(
     project_root = Path(__file__).resolve().parents[3]
     input_dir = input_dir if input_dir.is_absolute() else project_root / input_dir
     output_dir = output_dir if output_dir.is_absolute() else project_root / output_dir
+    summary_dir = summary_dir or (
+        Path("outputs/sgootr/state_specific_schedule_search") / output_dir.name
+    )
+    summary_dir = (
+        summary_dir if summary_dir.is_absolute() else project_root / summary_dir
+    )
     if not input_dir.is_dir():
         raise NotADirectoryError(f"Tree input directory does not exist: {input_dir}")
     edge_file = input_dir / "transition_edges.txt"
@@ -142,7 +149,12 @@ def run_state_specific_schedule_search(
         raise FileExistsError(
             f"Schedule-search output directory must be empty: {output_dir}"
         )
+    if summary_dir.exists() and any(summary_dir.iterdir()):
+        raise FileExistsError(
+            f"Schedule-search summary directory must be empty: {summary_dir}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_dir.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(seed)
     seen: set[tuple[int, int, int]] = set()
@@ -272,8 +284,13 @@ def run_state_specific_schedule_search(
                     "best_transition_times": "",
                 }
             )
-        _write_cohort_summary(output_dir, cohort_rows)
-        _write_summary(output_dir, results, failures)
+        _write_cohort_summary(summary_dir, cohort_rows)
+        _write_summary(
+            summary_dir,
+            results,
+            failures,
+            results_dir=project_root,
+        )
         if stagnant_cohorts >= DEFAULT_STAGNATION_COHORTS:
             print(
                 f"Stopping after {stagnant_cohorts} cohorts without a global "
@@ -282,7 +299,12 @@ def run_state_specific_schedule_search(
             )
             break
 
-    best_result = _write_summary(output_dir, results, failures)
+    best_result = _write_summary(
+        summary_dir,
+        results,
+        failures,
+        results_dir=project_root,
+    )
     if best_result is None:
         raise RuntimeError("No state-specific schedules completed successfully.")
     print(
@@ -306,6 +328,7 @@ def main() -> None:
     )
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--summary-dir", type=Path)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--cohorts", type=int, default=DEFAULT_MAX_COHORTS)
     parser.add_argument("--cohort-size", type=int, default=DEFAULT_COHORT_SIZE)
@@ -316,6 +339,7 @@ def main() -> None:
         args.input_dir,
         args.output_dir,
         args.workers,
+        summary_dir=args.summary_dir,
         cohorts=args.cohorts,
         cohort_size=args.cohort_size,
         elite_count=args.elite_count,

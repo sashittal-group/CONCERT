@@ -3,10 +3,13 @@ from src.tree_utils import prepare_tree
 from src.closed_form_coord import calculate_log_likelihood_closed, calculate_Us
 
 import torch
+from pathlib import Path
 
 def main():
     num_transitions_list = [5, 10, 25, 50, 100, 500, 1000, 10000]
-    with open("data/simulation/bdt_ctmc/emperical_proof_data/tree_likelihoods_cstm.txt", "w") as f:
+    output_path = Path("outputs/supplementary/bdt_ctmc/tree_likelihoods_cstm.txt")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as f:
         for tree_id in range(1, 101):
             dir = f"data/simulation/bdt_ctmc/emperical_proof_data/tree_{tree_id:03d}"
             node_path = f"{dir}/nodes.csv"

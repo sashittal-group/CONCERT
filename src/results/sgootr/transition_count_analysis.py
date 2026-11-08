@@ -321,6 +321,7 @@ def _save_best_fit(
 def _search_count(
     input_dir: Path,
     output_dir: Path,
+    summary_dir: Path,
     num_ptln_times: int,
     *,
     workers: int,
@@ -339,6 +340,7 @@ def _search_count(
     if len(candidate_indices) < schedule_size:
         raise ValueError("The tree does not contain enough distinct grid times.")
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_dir.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(seed)
     seen: set[tuple[int, ...]] = set()
@@ -348,7 +350,7 @@ def _search_count(
     next_schedule_number = 1
     best_likelihood = -math.inf
     stagnant_cohorts = 0
-    summary_path = output_dir / "schedule_search_summary.csv"
+    summary_path = summary_dir / "schedule_search_summary.csv"
 
     with ProcessPoolExecutor(
         max_workers=workers,
@@ -546,6 +548,7 @@ def run_analysis(
     output_dir: Path,
     existing_two_count_inference: Path | None = None,
     *,
+    summary_dir: Path | None = None,
     counts: tuple[int, ...] = (1, 2, 3, 4, 5),
     workers: int = 4,
     cohorts: int = DEFAULT_MAX_COHORTS,
@@ -565,12 +568,24 @@ def run_analysis(
         raise ValueError("elite_count must be nonnegative and less than cohort_size.")
     input_dir = input_dir.resolve()
     output_dir = output_dir.resolve()
+    project_root = Path(__file__).resolve().parents[3]
+    summary_dir = summary_dir or (
+        Path("outputs/sgootr/transition_count_analysis") / output_dir.name
+    )
+    summary_dir = (
+        summary_dir if summary_dir.is_absolute() else project_root / summary_dir
+    )
     cohort = _cohort_label(input_dir)
     if not input_dir.is_dir():
         raise NotADirectoryError(f"Tree input directory does not exist: {input_dir}")
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError(f"Analysis output directory is not empty: {output_dir}")
+    if summary_dir.exists() and any(summary_dir.iterdir()):
+        raise FileExistsError(
+            f"Analysis summary directory is not empty: {summary_dir}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_dir.mkdir(parents=True, exist_ok=True)
     results: dict[int, tuple[float, tuple[float, ...], str]] = {}
     if existing_two_count_inference is not None:
         existing_two_count_inference = existing_two_count_inference.resolve()
@@ -598,14 +613,15 @@ def run_analysis(
             str(existing_two_count_inference),
         )
 
-    project_root = Path(__file__).resolve().parents[3]
     for count in counts:
         if count in results:
             continue
         count_output = output_dir / f"ptln_{count}"
+        count_summary = summary_dir / f"ptln_{count}"
         likelihood, times, inference_path = _search_count(
             input_dir,
             count_output,
+            count_summary,
             count,
             workers=workers,
             cohorts=cohorts,
@@ -622,8 +638,8 @@ def run_analysis(
             times,
             inference_source,
         )
-        _write_analysis(output_dir, results, cohort)
-    output_paths = _write_analysis(output_dir, results, cohort)
+        _write_analysis(summary_dir, results, cohort)
+    output_paths = _write_analysis(summary_dir, results, cohort)
     for path in output_paths:
         print(f"Wrote {path}")
     return results
@@ -638,6 +654,7 @@ def main() -> None:
     )
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--summary-dir", type=Path)
     parser.add_argument("--existing-two-count-inference", type=Path)
     parser.add_argument("--counts", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--workers", type=int, default=4)
@@ -650,6 +667,7 @@ def main() -> None:
         args.input_dir,
         args.output_dir,
         args.existing_two_count_inference,
+        summary_dir=args.summary_dir,
         counts=tuple(args.counts),
         workers=args.workers,
         cohorts=args.cohorts,

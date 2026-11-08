@@ -12,9 +12,9 @@ The workflow evaluates each parameter profile against the 273 retained TLS
 subtrees in `data/troupe/TLS/subtrees_kept_states`, uses the same normalized
 root likelihood as the inference run, and checks the fitted likelihood against
 the checkpoint. It uses the configured likelihood fractions and profile grid
-from `config_fixed_sampling_0.1.yaml`. It writes profile tables to
-`data/troupe/TLS/fixed_sampling_0.1/profiles/data/TLS_transition_times_100/`
-and PDF/SVG figures to the corresponding `figures/` directory. Sampling remains
+from `config_fixed_sampling_0.1.yaml`. It writes profile tables and PDF/SVG
+figures under
+`outputs/tls/fixed_sampling_0.1/transition_profiles/TLS/`. Sampling remains
 fixed at 0.1.
 
 The same command accepts the TLSC completed inference output:
@@ -29,12 +29,12 @@ same panels:
 
 ```bash
 python -m src.results.tls.compare_transition_profiles \
-  --tls-profiles data/troupe/TLS/fixed_sampling_0.1/profiles \
-  --tlsc-profiles data/troupe/TLSC/fixed_sampling_0.1/profiles
+  --tls-profiles outputs/tls/fixed_sampling_0.1/transition_profiles/TLS/data/TLS_transition_times_100 \
+  --tlsc-profiles outputs/tls/fixed_sampling_0.1/transition_profiles/TLSC/data/TLSC_transition_times_100
 ```
 
 The comparison PNGs are written to
-`data/troupe/TLS/fixed_sampling_0.1/profiles/figures/`.
+`outputs/tls/fixed_sampling_0.1/profile_comparison/`.
 
 ## TLS/TLSC figure panels
 
@@ -51,7 +51,7 @@ from 5 through 100 transitions, and reads the saved profile tables for the
 100-transition TLS and TLSC fits. It generates PNG, PDF, and SVG versions of
 each condition subpanel, Panels A-C, and the composite.
 Outputs are written to
-`data/troupe/figures/figure_generator/`. The TLS result is marked as a
+`outputs/tls/figure_generator/`. The TLS result is marked as a
 checkpoint if its final `.out` file is absent. Panel A uses
 `figure_generator/tls_panelA.pdf`; its standalone PDF output is copied directly
 from that source, and a high-resolution render is used in the composite. Panel B
@@ -104,8 +104,8 @@ normalization. It calculates marginal state probabilities by message passing
 through the likelihood hierarchy, then records the most probable state for
 each edge segment. The long-format CSV contains one row per segment/state,
 including its log likelihood, posterior probability, and most-likely-state
-label. Results are stored under each dataset's
-`fixed_sampling_0.1/state_coloring/` directory with a `metadata.json` file.
+label. Results are stored under
+`outputs/tls/state_coloring/<dataset>/` with a `metadata.json` file.
 
 To render the stored most-likely segment states as colored subtree plots, run:
 
@@ -114,8 +114,8 @@ python -m src.results.tls.plot_state_coloring --dataset TLS
 python -m src.results.tls.plot_state_coloring --dataset TLSC
 ```
 
-The PNGs are grouped by source tree under each dataset's
-`fixed_sampling_0.1/state_coloring/plots/` directory. They use the same
+The PNGs are grouped by source tree under
+`outputs/tls/state_coloring/<dataset>/plots/`. They use the same
 rectangular, root-at-top ultrametric layout as `draw_ultrametric_tree`; each
 edge segment is colored by its most likely state (NMPs gray, Somite pink,
 NeuralTube green). The `plot_index.csv` file records the number of plotted
@@ -138,7 +138,7 @@ preserved. A segment is counted once in every interval it overlaps. The PNGs
 and their count tables are written as
 `state_segment_counts_by_time_100.png` and
 `state_segment_counts_by_time_100.csv` in each dataset's
-`fixed_sampling_0.1/state_coloring/plots/` directory.
+`outputs/tls/state_coloring/<dataset>/plots/` directory.
 
 The same command also writes 100%-stacked state-proportion plots,
 `state_segment_proportions_by_time_100.png`, and their normalized tables,

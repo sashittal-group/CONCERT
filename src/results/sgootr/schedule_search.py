@@ -294,6 +294,8 @@ def _write_summary(
     output_dir: Path,
     results: list[ScheduleResult],
     failures: list[ScheduleFailure],
+    *,
+    results_dir: Path | None = None,
 ) -> ScheduleResult | None:
     ranked_results = sorted(
         results,
@@ -317,6 +319,12 @@ def _write_summary(
         )
         writer.writeheader()
         for rank, result in enumerate(ranked_results, start=1):
+            try:
+                result_path = result.result_path.relative_to(
+                    results_dir or output_dir
+                )
+            except ValueError:
+                result_path = result.result_path
             writer.writerow(
                 {
                     "rank": rank,
@@ -327,7 +335,7 @@ def _write_summary(
                     "transition_times": " ".join(
                         f"{time:.17g}" for time in result.transition_times
                     ),
-                    "result_path": result.result_path.relative_to(output_dir),
+                    "result_path": result_path,
                     "error": "",
                 }
             )
@@ -390,6 +398,7 @@ def run_schedule_search(
     elite_count: int = DEFAULT_ELITE_COUNT,
     seed: int = 42,
     exclude_zero_time: bool = False,
+    summary_dir: Path | None = None,
 ) -> list[ScheduleResult]:
     if workers < 1:
         raise ValueError("workers must be at least one.")
@@ -409,6 +418,12 @@ def run_schedule_search(
     )
     output_dir = (
         output_dir if output_dir.is_absolute() else project_root / output_dir
+    )
+    summary_dir = summary_dir or (
+        Path("outputs/sgootr/schedule_search") / output_dir.name
+    )
+    summary_dir = (
+        summary_dir if summary_dir.is_absolute() else project_root / summary_dir
     )
     if not input_dir.is_dir():
         raise NotADirectoryError(f"Tree input directory does not exist: {input_dir}")
@@ -443,7 +458,12 @@ def run_schedule_search(
         raise FileExistsError(
             f"Schedule-search output directory must be empty: {output_dir}"
         )
+    if summary_dir.exists() and any(summary_dir.iterdir()):
+        raise FileExistsError(
+            f"Schedule-search summary directory must be empty: {summary_dir}"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
     seen: set[ScheduleIndices] = set()
     results: list[ScheduleResult] = []
@@ -583,8 +603,13 @@ def run_schedule_search(
                 }
             )
 
-        _write_cohort_summary(output_dir, cohort_rows)
-        _write_summary(output_dir, results, failures)
+        _write_cohort_summary(summary_dir, cohort_rows)
+        _write_summary(
+            summary_dir,
+            results,
+            failures,
+            results_dir=project_root,
+        )
         if stagnant_cohorts >= DEFAULT_STAGNATION_COHORTS:
             print(
                 f"Stopping after {stagnant_cohorts} cohorts without a global "
@@ -593,7 +618,12 @@ def run_schedule_search(
             )
             break
 
-    best_result = _write_summary(output_dir, results, failures)
+    best_result = _write_summary(
+        summary_dir,
+        results,
+        failures,
+        results_dir=project_root,
+    )
     if best_result is None:
         raise RuntimeError(
             "No schedules completed successfully; see the schedule summary."
@@ -605,8 +635,8 @@ def run_schedule_search(
         f"times={best_result.transition_times}"
     )
     print(f"Summary: {output_dir / 'schedule_search_summary.csv'}")
-    print(f"Cohort summary: {output_dir / 'cohort_summary.csv'}")
-    print(f"Best schedule file: {output_dir / 'best_schedule.txt'}")
+    print(f"Cohort summary: {summary_dir / 'cohort_summary.csv'}")
+    print(f"Best schedule file: {summary_dir / 'best_schedule.txt'}")
     return results
 
 
@@ -620,6 +650,7 @@ def main() -> None:
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--transition-edges-file", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--summary-dir", type=Path)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--cohorts", type=int, default=DEFAULT_MAX_COHORTS)
     parser.add_argument("--cohort-size", type=int, default=DEFAULT_COHORT_SIZE)
@@ -642,6 +673,7 @@ def main() -> None:
         elite_count=args.elite_count,
         seed=args.seed,
         exclude_zero_time=args.exclude_zero_time,
+        summary_dir=args.summary_dir,
     )
 
 

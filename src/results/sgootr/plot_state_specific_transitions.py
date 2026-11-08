@@ -480,6 +480,7 @@ def plot_state_specific_inference(
     inference_path: Path,
     input_dir: Path,
     *,
+    output_dir: Path = Path("outputs/sgootr/CRC11/selected_fit"),
     likelihood_drops: tuple[float, ...] = (0.1, 0.25, 0.5, 1.0),
 ) -> list[Path]:
     (
@@ -569,7 +570,8 @@ def plot_state_specific_inference(
         STATE_NAMES,
     )
     state_segments = pd.DataFrame(state_rows)
-    figures_dir = inference_path.parent / "figures"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir = output_dir / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
     state_segments.to_csv(figures_dir / "CRC11_state_segments.csv", index=False)
     state_coloring_plotter.CELL_STATE_COLORS.update(
@@ -588,7 +590,7 @@ def plot_state_specific_inference(
         )
         state_plot_outputs.append(output)
 
-    tree_output = inference_path.parent / "tree_with_inferred_transition_times.png"
+    tree_output = output_dir / "tree_with_inferred_transition_times.png"
     node_colors = [
         (node, STATE_NAMES[int(data["state"])])
         for node, data in tree.nodes(data=True)
@@ -615,7 +617,7 @@ def plot_state_specific_inference(
     axis.figure.savefig(tree_output, dpi=180, bbox_inches="tight")
     plt.close(axis.figure)
 
-    profile_output_dir = inference_path.parent / "profiles"
+    profile_output_dir = output_dir / "profiles"
     profile_outputs = _profile_outputs(
         inference_path,
         profile_output_dir,
@@ -643,6 +645,11 @@ def main() -> None:
     parser.add_argument("inference", type=Path)
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("outputs/sgootr/CRC11/selected_fit"),
+    )
+    parser.add_argument(
         "--likelihood-drops",
         type=float,
         nargs="+",
@@ -652,6 +659,7 @@ def main() -> None:
     plot_state_specific_inference(
         args.inference,
         args.input_dir,
+        output_dir=args.output_dir,
         likelihood_drops=tuple(args.likelihood_drops),
     )
 

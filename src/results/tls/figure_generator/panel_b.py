@@ -19,7 +19,7 @@ from .style import FONT_FAMILY, FONT_SIZE, PANEL_LABEL_SIZE
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = REPOSITORY_ROOT / "data" / "troupe"
-DEFAULT_OUTPUT_DIR = DATA_ROOT / "figures" / "figure_generator"
+DEFAULT_OUTPUT_DIR = REPOSITORY_ROOT / "outputs" / "tls" / "figure_generator"
 FIGURE_SIZE = (11.5, 4.5)
 PANEL_FONT_SIZE = 12
 COMPOSITE_FONT_SIZE = 12

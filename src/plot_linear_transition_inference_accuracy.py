@@ -649,15 +649,13 @@ def main() -> None:
     args = parser.parse_args()
     if args.transition_time_errors:
         output_path = args.output or (
-            args.data_dir
-            / "figures"
+            Path("outputs/simulation/linear_A_to_D/figures")
             / "concert_transition_time_error_boxplots.png"
         )
         plot_concert_transition_time_errors(args.data_dir, output_path)
         return
     output_path = args.output or (
-        args.data_dir
-        / "figures"
+        Path("outputs/simulation/linear_A_to_D/figures")
         / "identifiable_parameters_ground_truth_vs_inferred.png"
     )
     plot_identifiable_parameters(args.data_dir, output_path)

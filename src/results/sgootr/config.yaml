@@ -1,7 +1,7 @@
 sgootr_profiles:
   data_root: ../../../data/sgootr/processed
-  preprocessing_root: data
-  figure_root: figures
+  preprocessing_root: ../../../outputs/sgootr/profiles
+  figure_root: ../../../outputs/sgootr/figures
   datasets:
     - birth_shifted_min_branch
     - transition_anchored

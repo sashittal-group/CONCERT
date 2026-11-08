@@ -1,5 +1,10 @@
 # KPTracer parameter profiles
 
+> **Workflow status:** KPTracer is outside the manuscript reproduction
+> workflows. Its Snakemake rules have been removed from the root `Snakefile`;
+> the Snakemake commands below are historical and no longer run as written.
+> The analysis code remains available for separate use.
+
 The workflow profiles one parameter at a time around the stem-free,
 crown-conditioned KPTracer fit. It uses the known root state 0 and conditions
 on both crown daughter lineages surviving. Rate-profile domains are bounded

@@ -1126,7 +1126,10 @@ def main() -> None:
     )
     arguments = parser.parse_args()
     input_dir = arguments.input_dir or arguments.inference.parent
-    output_dir = arguments.output_dir or arguments.inference.parent / "profiles"
+    output_dir = arguments.output_dir or (
+        Path("outputs/sgootr/profiles/combined_inference")
+        / arguments.inference.parent.name
+    )
     config = load_config(arguments.config, section="sgootr_profiles")
     if arguments.likelihood_drops is not None:
         config = _config_with_likelihood_drops(

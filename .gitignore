@@ -5,6 +5,8 @@ data/
 !src/results/tls/data/
 !src/results/tls/data/**
 outputs/
+outputs2/
+tests/
 
 __pycache__/
 
@@ -17,3 +19,5 @@ __pycache__/
 torchinductor_samin/
 dump/sharp-tni/results/kptracer_sharptni_20261101_1118/enumerated_solutions/sankoff_solutions_sorted_by_cotransmission.ptree.gz
 sharp-tni/results/*/enumerated_solutions/
+mach2/
+sharp-tni/
