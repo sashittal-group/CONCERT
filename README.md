@@ -1,59 +1,181 @@
 # CONCERT
 
-This repository contains research code for **“Phylodynamic Inference with
+This repository contains code for **“Phylodynamic Inference with
 Coordinated Cell State Transitions.”** It implements the Coordinated State
 Transition Model (CSTM) and CONCERT, an inference framework for birth, death,
 sampling, and coordinated cell-state transitions on lineage trees.
 
-The commands below are organized by the paper’s computational results. Run them
-from the repository root unless a command says otherwise.
 
-## Results and workflows
+## Contents
 
-| Paper result | Workflow | Main outputs |
-|---|---|---|
-| Simulation comparisons | [Simulation studies](#simulation-studies) | Inference results and parameter-accuracy plots for star and linear graphs |
-| TLS/TLSC analysis | [TLS and TLSC](#tls-and-tlsc) | Fixed-sampling fits, likelihood profiles, and figure panels |
-| CRC11 analysis | [CRC11](#crc11) | State-specific fit, transition-count comparison, and manuscript figure |
-| KPTracer analysis | [KPTracer](#kptracer) | Crown-conditioned parameter profiles and sensitivity figures |
-| Numerical convergence (Supplementary B.1) | [CSTM–BDT-CTMC convergence](#cstm--bdt-ctmc-convergence) | CSTM likelihoods and convergence plot |
+- [Overview](#overview)
+- [Installation and setup](#installation-and-setup)
+- [Input and output formats](#input-and-output-formats)
+  - [Trees and state IDs](#trees-and-state-ids)
+  - [Transition graph and time files](#transition-graph-and-time-files)
+  - [Inference output](#inference-output)
+- [Quickstart](#quickstart)
+- [Simulation studies](#simulation-studies)
+- [TLS and TLSC](#tls-and-tlsc)
+- [CRC11](#crc11)
+- [CSTM–BDT-CTMC convergence](#cstm-bdt-ctmc-convergence)
+- [Repository layout](#repository-layout)
+- [Retained analysis notebooks](#retained-analysis-notebooks)
 
-## Setup, data, and external software
+## Overview
 
-Create an environment before running the analyses:
+![Overview of the CSTM and CONCERT workflow](assets/overview_concert.png)
+
+CONCERT implements the Coordinated State Transition Model (CSTM), a
+multi-type birth-death model for lineage trees whose lineages occupy discrete
+cell states. State-specific birth, death, and sampling rates describe lineage
+dynamics; a directed transition graph describes which cell-state changes are
+allowed. CSTM accounts for coordinated state changes at shared times in the
+lineage history. CONCERT uses observed lineage-tree structure and sampled-tip
+states to estimate model rates, transition probabilities, and transition times.
+
+## Installation and setup
+
+The checked-in example was run with Python 3.13 and PyTorch 2.14. 
 
 ```bash
 git clone https://github.com/sashittal-group/phylodynamic-CARTA.git
 cd phylodynamic-CARTA
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install torch numpy pandas scipy networkx matplotlib pyyaml
 ```
 
-This repository snapshot does not include a pinned Python dependency manifest,
-so there is no authoritative `pip install -r ...` command. The workflows use Python scientific packages including PyTorch, NumPy, pandas,
-SciPy, Matplotlib, NetworkX, and PyYAML. Snakemake is needed for the workflow
-targets below.
-Install versions compatible with your environment before running the analyses.
+The packages above support CONCERT inference and the included simulation
+example. To run Snakemake workflows, install Snakemake as well:
 
-The input trees and generated intermediate results are not a self-contained
-dataset in this checkout; many paths under `data/` are local or ignored files.
-Obtain the study inputs and place them at the paths specified below and in the
-workflow notes before running a result. Depending on the result, external
-software is also required: LSD2 and MACH2 for SGOOTR preprocessing, R with
-diversitree, BEAM, MACH2, and the companion `phylodynamic-carta-c` executable
-for BDT-CTMC.
+```bash
+python -m pip install snakemake
+```
 
-Generated files follow a two-root convention:
+## Input and output formats
 
-- `data/` contains input data, generated simulation trees, and full per-tree or
-  per-schedule inference outputs.
-- `outputs/` contains figures, aggregate tables, profile summaries, and other
-  compact analysis results.
+### Trees and state IDs
 
-Both directories are ignored by Git. Keep these roles separate when
-overriding output paths; figures and aggregate summaries belong in `outputs/`.
-The compact, generated linear A → D example is stored separately under
-`examples/linear_A_to_D/` so its inputs and fit are available in a clean clone.
+Each tree is represented by a matching `nodes.csv` and `edges.csv` pair.
+CONCERT searches the input directory recursively and pairs files by replacing
+`edges` with `nodes` in the filename. The included example has one pair in each
+`tree_N/` directory.
+
+`nodes.csv` has one row per node:
+
+```csv
+node_id,T,is_leaf,state_id
+0,1.0,0,-1
+5,0.6413474828,0,-1
+42,0.0,1,3
+```
+
+`node_id` is unique within the tree. `is_leaf` is `1` for a sampled tip and
+`0` otherwise. A sampled tip's `state_id` is a zero-based state index; `-1`
+can be used when an internal node's state is unknown. State IDs follow the
+order in the setting, so the example maps A, B, C, D to 0, 1, 2, 3.
+
+The tree time coordinate `T` is ordered as in leaf-to-root order: the root
+at 1 and extant tips at 0. It therefore decreases along a directed
+parent-to-child edge. `edges.csv` contains one row per directed edge:
+
+```csv
+parent,child,branch_length
+0,5,0.3586525172
+5,6,0.0681977328
+```
+
+The branch length is the difference between the parent's and child's `T`.
+Keep each tree's node and edge files together and preserve the parent-to-child
+orientation.
+
+### Transition graph and time files
+
+The file passed to `--transition-edges-file` has no header; each line is a
+zero-based `source_state target_state` pair. The linear example's file is:
+
+```text
+2 3
+1 2
+0 1
+```
+
+This declares the allowed transitions C→D, B→C, and A→B. The file lists
+allowed edges, not a chronological schedule. A copy for the example is
+included at `examples/linear_A_to_D/input/transition_edges_linear.txt`.
+
+### Inference output
+
+The required `--output` file is a plain-text fit summary. The default
+joint-inference format contains:
+
+```text
+LL=...
+birth: ...
+death: ...
+sampling: ...
+transitions:
+0->0 ...
+0->1 ...
+...
+transition_times:
+0 ...
+1 ...
+...
+```
+
+The rate and probability vectors use the state-ID order from the input.
+`transitions` lists the estimated probabilities for self-transitions and
+allowed directed edges. `transition_times` lists the fitted leaf-to-root ordered 
+schedule. (Note: 
+The simulator's `transition_times.csv` is in the opposite order: 
+it begins with an event count and then lists
+realized forward simulation times.) `--log` writes optimizer iterations; standard output reports
+progress and standard error contains diagnostic messages.
+
+## Quickstart
+
+The example under `examples/linear_A_to_D/` eight
+simulated A→B→C→D trees. A `setting.txt` file is the simulator's ground truth: it
+defines the state order, birth/death/sampling rates, forward transition
+schedule, transition probabilities, initial state, simulation horizon, and
+requested number of trees. 
+
+Run the default CONCERT mode from the repository root:
+
+```bash
+OMP_NUM_THREADS=1 python -m src.concert examples/linear_A_to_D/input \
+  --num-states 4 \
+  --num-trees 8 \
+  --transition-edges-file examples/linear_A_to_D/input/transition_edges_linear.txt \
+  --num-transition-times 3 \
+  --output examples/linear_A_to_D/output/inference.out \
+  --log examples/linear_A_to_D/output/inference.log
+```
+
+`OMP_NUM_THREADS=1` limits the
+compiled CPU kernel to one OpenMP thread; an uncapped run stalled at an
+OpenMP barrier in this environment. This only changes CPU parallelism, not the
+model inputs. Use
+`python -m src.concert examples/linear_A_to_D/input --help` to see the
+default-mode arguments.
+
+The included setting is a simulation reference, not an inference
+configuration. In state order A, B, C, D it has birth rates 6, 12, 8, 8;
+death rates 2, 4, 2, 1; and sampling rates 0.5 per state. For example,
+the A transition row is A→A = 0.203 and A→B = 0.797. The schedule and
+transition rows in the setting provide the known values against which a fit
+can be assessed.
+
+After the run, open `examples/linear_A_to_D/output/inference.out`. Read
+`birth`, `death`, and `sampling` in state-ID order; read `transitions` as
+source-to-target probabilities; and read `transition_times` as the ordered
+normalized schedule described above. The corresponding iteration history is
+in `inference.log`.
+
+
 
 ## Repository layout
 
@@ -61,189 +183,20 @@ The compact, generated linear A → D example is stored separately under
   inference implementation.
 - `src/analyses/common/` contains reusable profile, plotting, and tree-data
   utilities.
-- `src/analyses/simulation/`, `tls/`, `crc11/`, `kptracer/`, and `bdt_ctmc/`
+- `src/analyses/simulation/`, `tls/`, `crc11/`, and `bdt_ctmc/`
   contain code and configuration specific to each result group.
 - `examples/linear_A_to_D/` contains an eight-tree input dataset and its
   CONCERT inference output.
 - `data/` stores study inputs, simulated trees, and full inference fits;
   `outputs/` stores figures and compact analysis summaries.
 
-The root `Snakefile` discovers some simulation inputs while it is being
-parsed. In a clean checkout without those generated inputs, Snakemake may
-fail before it can select even a specific target. Its default `all` target
-only selects the configured TLS fixed-sampling plots; it does not reproduce
-all paper results. Use the explicit targets below after preparing the
-required inputs.
-
-## Input and output formats
-
-The main inference CLI is `python -m src.concert`. With no selector it jointly
-optimizes transition times and model parameters. Use
-`--given-transition-times` to fit with fixed transition times. The inference
-application accepts one or more paired tree files from an input directory.
-Each tree is represented by:
-
-| File | Required columns | Meaning |
-|---|---|---|
-| `nodes.csv` | `node_id,T,is_leaf,state_id` | One row per node; `node_id` is unique, `T` is its normalized time, `is_leaf` is `0` or `1`, and sampled-tip `state_id` is a zero-based integer. Internal or unobserved states may be `-1`. |
-| `edges.csv` | `parent,child,branch_length` | One directed parent-child edge per row, with a nonnegative branch length. |
-
-Use matching filenames such as `nodes.csv`/`edges.csv` or
-`nodes_1.csv`/`edges_1.csv`. The command searches the input directory
-recursively and pairs files by replacing `edges` with `nodes` in the filename.
-Use `--num-trees` to limit how many complete pairs are loaded.
-
-The transition inputs are separate from the tree pair:
-
-- The file passed to `--transition-edges-file` has no header; each line is a
-  whitespace-separated `source_state target_state` pair using zero-based
-  state IDs. For example, [`src/analyses/simulation/config/transition_edges_star.txt`](src/analyses/simulation/config/transition_edges_star.txt)
-  defines the three non-self transitions from state `0` in a four-state star.
-- The file passed to `--transition-times-file` has one normalized transition
-  time per line. For simulator settings, use
-  `src.concert --analysis extract-star-transition-times` to convert the scheduled times to the
-  normalized time scale used by the tree files. A simulator-generated
-  `transition_times.csv` records realized events (and starts with an event
-  count); it is not the scheduled-time input expected by
-  `python -m src.concert --given-transition-times`.
-
-The `--output` file is a plain-text fit summary containing the log likelihood,
-birth/death/sampling vectors, nonzero transition probabilities, and transition
-times. `--log` writes the optimizer log. Keep full fits and logs in `data/`;
-figures and compact summaries belong in `outputs/`.
-
-## Quick start: one simulated tree
-
-This example creates one four-state, three-transition star setting, simulates
-a single tree, extracts its scheduled transition times, and fits the model to
-that tree. It does not require any of the paper's external comparison tools:
-
-```bash
-# Create one star_3 setting.
-python -m src.concert --analysis generate-star-transition-settings \
-  --output-root data/example --num-settings 1
-
-# Simulate one tree from the setting.
-python -m src.concert --analysis simulate-coordinate-tree \
-  data/example/star_3/setting_1/setting.txt \
-  0 data/example/star_3/setting_1/tree_0
-
-# Convert setting times to the normalized scale used by the tree.
-python -m src.concert --analysis extract-star-transition-times \
-  data/example/star_3/setting_1/setting.txt \
-  data/example/star_3/setting_1/transition_times.txt
-
-# Fit one tree; the complete result and optimizer log stay under data/.
-python -m src.concert --given-transition-times data/example/star_3/setting_1 \
-  --num-states 4 --num-trees 1 \
-  --transition-edges-file src/analyses/simulation/config/transition_edges_star.txt \
-  --transition-times-file data/example/star_3/setting_1/transition_times.txt \
-  --output data/example/star_3/setting_1/inference.out \
-  --log data/example/star_3/setting_1/inference.log \
-  --device cpu
-```
-
-The simulator writes `nodes.csv`, `edges.csv`, tree images, and realized-event
-CSV files under `tree_0/`. Its `transition_times.csv` starts with the event
-count followed by one time per row; `transition_times_with_edges.csv` starts
-with the count followed by rows of
-`time,start_node,end_node,source_state_id,target_state_id` (no header). These
-files describe realized events, whereas the separate `transition_times.txt`
-contains the scheduled times used by this inference example. The inference
-command estimates model parameters while holding those scheduled times fixed.
-The generated setting and tree are reproducible inputs for trying other
-options such as `--num-trees` and `--device`.
-
-## Example: eight linear A → D trees
-
-The repository includes setting 45 and its first eight trees from simulation
-batch 0, plus the completed CONCERT fit, under `examples/linear_A_to_D/`. To
-regenerate the example inputs from the repository root:
-
-```bash
-python -m src.concert --analysis generate-linear-transition-settings \
-  --output-dir examples/linear_A_to_D/setting --num-settings 1 \
-  --start-id 45 --seed 3
-
-for tree in 0 1 2 3 4 5 6 7; do
-  seed=$((450000 + tree * 100))
-  python -m src.concert --analysis simulate-coordinate-tree \
-    examples/linear_A_to_D/setting/setting_45/setting.txt \
-    "$seed" "examples/linear_A_to_D/input/tree_$tree"
-done
-```
-
-The simulator retries consecutive seeds when a trial produces no sampled tips.
-The eight inputs are node/edge CSV pairs in `input/tree_0/` through
-`input/tree_7/`. To jointly estimate the transition times and model parameters
-with the same state-specific coordinate-search application used by the
-Snakemake linear-inference rule:
-
-```bash
-mkdir -p examples/linear_A_to_D/output
-export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
-python -m src.concert --analysis joint-state-specific-transition-times \
-  --tree-directory examples/linear_A_to_D/input \
-  --num-states 4 --num-trees 8 \
-  --transition-edges-file src/analyses/simulation/config/transition_edges_linear.txt \
-  --max-time 1 --grid-size 1000 --random-seed 45000 \
-  --lbfgs-max-iter 20 --search-rounds 6 \
-  --output examples/linear_A_to_D/output/inference.out \
-  --log examples/linear_A_to_D/output/inference.log \
-  --device cpu \
-  > examples/linear_A_to_D/output/stdout.log \
-  2> examples/linear_A_to_D/output/stderr.log
-```
-
-The fit reports the estimated birth, death, sampling, transition probabilities,
-and one transition time per linear edge. Each `epoch_N` transition matrix
-corresponds to one directed edge in the linear graph; only that edge's source
-state can transition during that epoch. `transition_times_by_edge` maps each
-edge to its fitted normalized time. The edges are listed in reverse state order
-(`2->3`, `1->2`, `0->1`): the simulation setting's times for A, B, and C map
-to `0->1`, `1->2`, and `2->3`, respectively. This uses the same grid and
-search rounds as the full linear Snakemake inference rule. For the full
-simulation workflow,
-`generate_linear_transition_settings` and `simulate_linear_transition_3`
-produce the configured data, while
-`infer_linear_transition_3_joint_coordinate_first8` fits the first eight trees
-in a setting/batch. The aggregate target
-`infer_linear_transition_3_joint_coordinate_all` expands this fit over the
-configured settings and batches; it is substantially larger than this example.
-The checked-in setting uses the simulation generator's default randomized
-transition probabilities; do not pass `--self-transition-probabilities` when
-regenerating it. The included fit is the completed setting 45, batch 0
-simulation inference for these same trees; it took about 65 minutes on
-`owl123`. Its fitted forward transition times are approximately 0.137, 0.313,
-and 0.563 for A→B, B→C, and C→D.
-
-## CONCERT command-line interface
-
-Use one entry point for inference and the Python analysis tasks invoked by
-Snakemake. With no selector, the CLI runs joint transition-time and parameter
-inference.
-
-| Selector | Application |
-|---|---|
-| *(none)* | Jointly optimize transition times and model parameters. |
-| `--given-transition-times` | Fit parameters with fixed transition times. |
-| `--given-edge-specific-transition-times` | Fit using observed edge-specific transitions. |
-| `--continue` | Continue a fit from saved parameter estimates. |
-| `--progressive-schedule` | Estimate transition times by progressive grid sweeps. |
-| `--state-specific-transitions` | Fit the CRC11 state-specific transition model. |
-| `--analysis TASK` | Run a named Python analysis task used by Snakemake. |
-
-Run `python -m src.concert --help` to list selectors and analysis tasks. For
-example, `python -m src.concert --given-transition-times --help` shows the
-fixed-time fit options, while `python -m src.concert --analysis profile-plot
---help` shows the profile plotting options.
 
 ## Simulation studies
 
 The comparison workflow evaluates CONCERT against diversitree, BEAM, and
 MACH2 on four-state star and linear transition graphs. The inference-completed
 comparison covers the 20 configured star and 20 configured linear
-setting/batch combinations, using the first eight trees in each batch.
+setting/batch combinations, using the eight trees in each batch.
 For the linear simulation workflow, the Snakemake rules are
 `generate_linear_transition_settings`, `simulate_linear_transition_3`, and
 `infer_linear_transition_3_joint_coordinate_first8`; the latter fits the
@@ -260,10 +213,10 @@ application without requiring the full configured simulation set.
      --num-settings 100
    ```
 
-2. Run the curated comparison:
+2. Run the comparison:
 
    ```bash
-   snakemake --cores 1 coord_diff_inference_completed_batches_methods
+   snakemake coord_diff_inference_completed_batches_methods
    ```
 
    This target requires the comparison software and its configuration to be
@@ -285,10 +238,6 @@ application without requiring the full configured simulation set.
      --transition-time-errors
    ```
 
-The linear plot rule in the Snakefile is also available as
-`snakemake --cores 1 plot_linear_transition_3_identifiable_parameters`; it
-requires the full configured set of linear simulations and diversitree fits,
-not only the listed inference-completed batches.
 
 ## TLS and TLSC
 
@@ -296,7 +245,7 @@ The root workflow target for the configured fixed-sampling TLS/TLSC analysis
 is:
 
 ```bash
-snakemake --cores 1 tls_fixed_sampling_01
+snakemake tls_fixed_sampling_01
 ```
 
 It uses the subtree exports under `data/troupe/`, writes fits under each
@@ -320,9 +269,7 @@ python -m src.analyses.tls.compare_transition_profiles \
 python -m src.analyses.tls.figure_generator
 ```
 
-The TLS profile command uses a saved `.tmp.out` checkpoint; it is not produced
-by the profile command itself. The figure generator also expects the relevant
-inference runs and profile tables to be present. To reproduce the state-colored
+To reproduce the state-colored
 subtree plots after the 100-transition fits are available, run:
 
 ```bash
@@ -332,9 +279,6 @@ python -m src.analyses.tls.plot_state_coloring --dataset TLS
 python -m src.analyses.tls.plot_state_coloring --dataset TLSC
 ```
 
-See [the TLS workflow notes](src/analyses/tls/README.md) for individual panel
-commands and output locations. TLS figures, profiles, and state-coloring
-summaries are written under `outputs/tls/`.
 
 ## CRC11
 
@@ -363,7 +307,7 @@ targets. They require the prepared S10 input directory above. Run the full
 workflow with:
 
 ```bash
-snakemake --cores 4 sgootr_crc11_results
+snakemake sgootr_crc11_results
 ```
 
 This aggregate includes the full schedule search (up to 10 cohorts of 500
@@ -374,11 +318,11 @@ transition-count analysis are computationally expensive. To run or rerun only
 one stage, use its individual target:
 
 ```bash
-snakemake --cores 4 sgootr_crc11_schedule_search
-snakemake --cores 1 sgootr_crc11_fit_schedule_3857
-snakemake --cores 1 sgootr_crc11_selected_fit_plots
-snakemake --cores 4 sgootr_crc11_transition_count_analysis
-snakemake --cores 1 sgootr_crc11_manuscript_figure
+snakemake sgootr_crc11_schedule_search
+snakemake sgootr_crc11_fit_schedule_3857
+snakemake sgootr_crc11_selected_fit_plots
+snakemake sgootr_crc11_transition_count_analysis
+snakemake sgootr_crc11_manuscript_figure
 ```
 
 The fixed fit uses NC → PT at 0.356 and PT → LN at 0.131 and 0.282. Each
@@ -393,26 +337,6 @@ recreates the fit associated with the current manuscript figure. Additional
 state-specific fitting, profiling, and plotting commands are in
 [the CRC11 workflow notes](src/analyses/crc11/README.md) and
 [the state-specific transition notes](src/analyses/crc11/README_state_specific_transitions.md).
-
-## KPTracer
-
-The KPTracer sensitivity analysis requires the processed data and fitted
-parameters under `data/KPTracer-Data/processed_data`. Generate its profile
-tables and figures with:
-
-```bash
-python -m src.analyses.kptracer.preprocess \
-  --config src/analyses/kptracer/config.yaml
-
-python -m src.analyses.kptracer.plot \
-  --config src/analyses/kptracer/config.yaml
-```
-
-Profile tables are written under `outputs/kptracer/profiles/KPTracer/`, and
-the composite and individual parameter figures are written under
-`outputs/kptracer/figures/`. The input format and optional source-specific
-inference runner are documented in
-[the KPTracer workflow notes](src/analyses/kptracer/README.md).
 
 ## CSTM–BDT-CTMC convergence
 
@@ -433,7 +357,7 @@ are not included in this repository. For a setting named `SETTING_NAME`, its
 target is:
 
 ```bash
-snakemake --cores 1 data/simulation/bdt_ctmc/SETTING_NAME/inference.out
+snakemake data/simulation/bdt_ctmc/SETTING_NAME/inference.out
 ```
 
 The aggregate BDT-CTMC likelihood table belongs alongside the CSTM table at
@@ -442,23 +366,16 @@ The convergence plot is in
 [`notebooks/cstm_vs_ctmc.ipynb`](notebooks/cstm_vs_ctmc.ipynb); open and run it
 after producing both CSTM and BDT-CTMC likelihood files:
 
-```bash
-jupyter lab notebooks/cstm_vs_ctmc.ipynb
-```
 
 The notebook saves its convergence figures under
 `outputs/supplementary/bdt_ctmc/`.
 
-## Retained analysis notebooks
+## Analysis notebooks
 
-The repository retains notebooks used for paper results and supplementary
+The repository has notebooks used for paper results and supplementary
 analysis:
 
 - [`notebooks/TLS_100_transition_methods_and_results.ipynb`](notebooks/TLS_100_transition_methods_and_results.ipynb)
 - [`notebooks/tls_transition_resolution_stability.ipynb`](notebooks/tls_transition_resolution_stability.ipynb)
 - [`notebooks/SGOOTR_CRC11_methods_and_results.ipynb`](notebooks/SGOOTR_CRC11_methods_and_results.ipynb)
 - [`notebooks/cstm_vs_ctmc.ipynb`](notebooks/cstm_vs_ctmc.ipynb)
-
-Open a notebook from the repository root with `jupyter lab <notebook-path>`.
-Notebooks may depend on the input files and intermediate outputs described in
-the result sections above.

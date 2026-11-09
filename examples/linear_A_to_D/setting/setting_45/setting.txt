@@ -48,6 +48,3 @@ D -> D 1
 
 # initial state
 A
-
-# num trees
-100
