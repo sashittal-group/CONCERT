@@ -1,0 +1,53 @@
+4 # num states
+A B C D # states
+
+# birth rates
+A 10
+B 10
+C 8
+D 6
+
+# death rates
+A 3
+B 2
+C 1
+D 3
+
+# sampling rates
+A 0.5
+B 0.5
+C 0.5
+D 0.5
+
+# transition times (use - if a state has none)
+A 0.106
+B 0.242
+C 0.311
+D -
+
+# transition probabilities at each transition time
+A -> A 0.75
+A -> B 0.25
+A -> C 0
+A -> D 0
+B -> A 0
+B -> B 0.66666666666666663
+B -> C 0.33333333333333337
+B -> D 0
+C -> A 0
+C -> B 0
+C -> C 0.5
+C -> D 0.5
+D -> A 0
+D -> B 0
+D -> C 0
+D -> D 1
+
+# simulation time horizon
+1.0
+
+# initial state
+A
+
+# num trees
+100

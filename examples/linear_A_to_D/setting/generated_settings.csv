@@ -1,0 +1,2 @@
+setting,birth_A,birth_B,birth_C,birth_D,death_A,death_B,death_C,death_D,p_A_to_A,p_A_to_B,p_B_to_B,p_B_to_C,p_C_to_C,p_C_to_D,transition_time_A,transition_time_B,transition_time_C,sampling_rate,num_trees
+setting_1,10,10,8,6,3,2,1,3,0.75,0.25,0.6666666666666666,0.33333333333333337,0.5,0.5,0.106,0.242,0.311,0.5,100

@@ -1,8 +1,0 @@
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8] torch._dynamo hit config.recompile_limit (8)
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8]    function: 'forward' (/Users/samin/workspace/phylodynamic-carta/src/mle_closed_form2.py:620)
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8]    last reason: 0/7: len(self.datastructures[0]) == 21                        # return calculate_total_log_likelihood(  # src/mle_closed_form2.py:622 in forward
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8] User stack trace:
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8]   File "/Users/samin/workspace/phylodynamic-carta/src/mle_closed_form2.py", line 622, in forward
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8]     return calculate_total_log_likelihood(
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
-W1022 16:32:03.672000 42603 .venv/lib/python3.13/site-packages/torch/_dynamo/convert_frame.py:2008] [0/8] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html

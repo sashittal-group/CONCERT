@@ -1,0 +1,1 @@
+"""Shared CONCERT inference implementation."""
