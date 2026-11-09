@@ -2,16 +2,16 @@
 A B C D # states
 
 # birth rates
-A 10
-B 10
+A 6
+B 12
 C 8
-D 6
+D 8
 
 # death rates
-A 3
-B 2
-C 1
-D 3
+A 2
+B 4
+C 2
+D 1
 
 # sampling rates
 A 0.5
@@ -20,24 +20,24 @@ C 0.5
 D 0.5
 
 # transition times (use - if a state has none)
-A 0.106
-B 0.242
-C 0.311
+A 0.136
+B 0.324
+C 0.562
 D -
 
 # transition probabilities at each transition time
-A -> A 0.75
-A -> B 0.25
+A -> A 0.20314147154772802
+A -> B 0.7968585284522719
 A -> C 0
 A -> D 0
 B -> A 0
-B -> B 0.66666666666666663
-B -> C 0.33333333333333337
+B -> B 0.17190226474967341
+B -> C 0.82809773525032671
 B -> D 0
 C -> A 0
 C -> B 0
-C -> C 0.5
-C -> D 0.5
+C -> C 0.092708485084430858
+C -> D 0.90729151491556914
 D -> A 0
 D -> B 0
 D -> C 0

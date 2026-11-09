@@ -156,20 +156,19 @@ options such as `--num-trees` and `--device`.
 
 ## Example: eight linear A → D trees
 
-The repository includes a small example with one generated A → B → C → D
-setting, eight simulated trees under `examples/linear_A_to_D/input/`, and a
-CONCERT fit under `examples/linear_A_to_D/output/`. To regenerate the example
-inputs from the repository root:
+The repository includes setting 45 and its first eight trees from simulation
+batch 0, plus the completed CONCERT fit, under `examples/linear_A_to_D/`. To
+regenerate the example inputs from the repository root:
 
 ```bash
 python -m src.concert --analysis generate-linear-transition-settings \
-  --output-dir examples/linear_A_to_D/setting --num-settings 1 --seed 3 \
-  --self-transition-probabilities 0.75 0.6666666666666666 0.5
+  --output-dir examples/linear_A_to_D/setting --num-settings 1 \
+  --start-id 45 --seed 3
 
 for tree in 0 1 2 3 4 5 6 7; do
-  seed=$((10000 + tree * 100))
+  seed=$((450000 + tree * 100))
   python -m src.concert --analysis simulate-coordinate-tree \
-    examples/linear_A_to_D/setting/setting_1/setting.txt \
+    examples/linear_A_to_D/setting/setting_45/setting.txt \
     "$seed" "examples/linear_A_to_D/input/tree_$tree"
 done
 ```
@@ -187,7 +186,7 @@ python -m src.concert --analysis joint-state-specific-transition-times \
   --tree-directory examples/linear_A_to_D/input \
   --num-states 4 --num-trees 8 \
   --transition-edges-file src/analyses/simulation/config/transition_edges_linear.txt \
-  --max-time 1 --grid-size 1000 --random-seed 1000 \
+  --max-time 1 --grid-size 1000 --random-seed 45000 \
   --lbfgs-max-iter 20 --search-rounds 6 \
   --output examples/linear_A_to_D/output/inference.out \
   --log examples/linear_A_to_D/output/inference.log \
@@ -211,11 +210,12 @@ produce the configured data, while
 in a setting/batch. The aggregate target
 `infer_linear_transition_3_joint_coordinate_all` expands this fit over the
 configured settings and batches; it is substantially larger than this example.
-The example sets self-transition probabilities to 3/4, 2/3, and 1/2 for A, B,
-and C respectively, with the remainder assigned to the next state. This keeps
-more lineages in ancestor states while allowing lineages to reach D. The
-example-only generator option leaves the simulation workflow's default
-randomized probabilities unchanged.
+The checked-in setting uses the simulation generator's default randomized
+transition probabilities; do not pass `--self-transition-probabilities` when
+regenerating it. The included fit is the completed setting 45, batch 0
+simulation inference for these same trees; it took about 65 minutes on
+`owl123`. Its fitted forward transition times are approximately 0.137, 0.313,
+and 0.563 for A→B, B→C, and C→D.
 
 ## CONCERT command-line interface
 
